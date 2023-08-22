@@ -32,7 +32,7 @@ SECTIONS
 	.bss . : { *(.bss) }
 	edata = .;
 
-	. = 0xfffffe00;
+	. = 0xffdffe00;
 	.sinit = .;
 	.init . : {
 		*(.init);
