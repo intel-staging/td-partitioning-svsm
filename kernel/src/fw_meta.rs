@@ -8,6 +8,7 @@ extern crate alloc;
 
 use crate::address::PhysAddr;
 use crate::config::SvsmConfig;
+use crate::cpu::features::is_sev;
 use crate::cpu::ghcb::current_ghcb;
 use crate::error::SvsmError;
 use crate::kernel_region::new_kernel_region;
@@ -242,7 +243,7 @@ pub fn parse_fw_meta_data(mem: &[u8]) -> Result<SevFWMetaData, SvsmError> {
 
     // First check if this is the SVSM itself instead of OVMF
     let svsm_info_uuid = Uuid::from_str(SVSM_INFO_GUID)?;
-    if find_table(&svsm_info_uuid, raw_data).is_some() {
+    if is_sev() && find_table(&svsm_info_uuid, raw_data).is_some() {
         return Err(SvsmError::Firmware);
     }
 
