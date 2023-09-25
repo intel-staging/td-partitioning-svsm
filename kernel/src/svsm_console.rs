@@ -8,6 +8,9 @@ use crate::cpu::ghcb::current_ghcb;
 use crate::io::IOPort;
 use crate::sev::ghcb::GHCBIOSize;
 use crate::sev::msr_protocol::request_termination_msr;
+use crate::tdx::{
+    tdvmcall_io_read_16, tdvmcall_io_read_8, tdvmcall_io_write_16, tdvmcall_io_write_8,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct SVSMIOPort {}
@@ -47,5 +50,32 @@ impl IOPort for SVSMIOPort {
             Ok(v) => (v & 0xffff) as u16,
             Err(_e) => request_termination_msr(),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SVSMTdIOPort {}
+
+impl SVSMTdIOPort {
+    pub const fn new() -> Self {
+        SVSMTdIOPort {}
+    }
+}
+
+impl IOPort for SVSMTdIOPort {
+    fn outb(&self, port: u16, value: u8) {
+        tdvmcall_io_write_8(port, value);
+    }
+
+    fn inb(&self, port: u16) -> u8 {
+        tdvmcall_io_read_8(port)
+    }
+
+    fn outw(&self, port: u16, value: u16) {
+        tdvmcall_io_write_16(port, value);
+    }
+
+    fn inw(&self, port: u16) -> u16 {
+        tdvmcall_io_read_16(port)
     }
 }
