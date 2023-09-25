@@ -135,7 +135,9 @@ impl<'a> FwCfg<'a> {
     }
 
     fn find_svsm_region(&self) -> Result<MemoryRegion<PhysAddr>, SvsmError> {
-        let file = self.file_selector("etc/sev/svsm")?;
+        let file = self
+            .file_selector("etc/sev/svsm")
+            .or_else(|_| self.file_selector("etc/tdx/svsm"))?;
 
         if file.size != 16 {
             return Err(SvsmError::FwCfg(FwCfgError::FileSize(file.size)));
