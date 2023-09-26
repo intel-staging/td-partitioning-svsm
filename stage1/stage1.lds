@@ -10,15 +10,15 @@ OUTPUT_ARCH(i386:x86-64)
 
 SECTIONS
 {
-	.stext = ALIGN(.sdata  - SIZEOF(.text) - 4095, 4096);
+	.stext = ALIGN(textbase - 4095, 4096);
 	. = .stext;
 	.text : { *(.startup.*) *(.text) *(.text.*) }
 
-	.sdata = ALIGN(.srodata - SIZEOF(.data) - 4095, 4096);
+	.sdata = ALIGN(database - 4095, 4096);
 	. = .sdata;
 	.data : { *(.data) }
 
-	.srodata = ALIGN(.sbss - SIZEOF(.rodata) - 4095, 4096);
+	.srodata = ALIGN(rodatabase - 4095, 4096);
 	. = .srodata;
 	.rodata : { *(.rodata) }
 
@@ -27,7 +27,7 @@ SECTIONS
 	 * symbols don't alias, which would be confusing when
 	 * examining the resulting binary.
 	 */
-	.sbss = ALIGN(.sinit - SIZEOF(.bss) - 4095 - 1, 4096);
+	.sbss = ALIGN(bssbase - 4095 - 1, 4096);
 	. = .sbss;
 	.bss . : { *(.bss) }
 	edata = .;
@@ -43,6 +43,11 @@ SECTIONS
 		. = 512;
 	}
 	einit = .;
+
+	textbase = .sdata - SIZEOF(.text);
+	database = .srodata - SIZEOF(.data);
+	rodatabase = .sbss - SIZEOF(.rodata);
+	bssbase = .sinit - SIZEOF(.bss);
 
 	/DISCARD/ : {*(.*)}
 }
