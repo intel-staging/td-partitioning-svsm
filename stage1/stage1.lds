@@ -10,7 +10,7 @@ OUTPUT_ARCH(i386:x86-64)
 
 SECTIONS
 {
-	.stext = ALIGN(textbase - 4095, 4096);
+	.stext = ALIGN(textbase - 65535, 65536);
 	. = .stext;
 	.text : { *(.startup.*) *(.text) *(.text.*) }
 
