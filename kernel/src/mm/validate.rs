@@ -16,6 +16,7 @@ use crate::utils::{page_align_up, MemoryRegion};
 use alloc::vec::Vec;
 use core::cmp::min;
 use core::ptr;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 static VALID_BITMAP: SpinLock<ValidBitmap> = SpinLock::new(ValidBitmap::new());
 // Number of u64's in one page
@@ -37,6 +38,15 @@ fn check_addr_range(
     } else {
         paddr_begin >= region.start() && paddr_end <= region.end()
     }
+}
+
+#[inline(always)]
+fn bitmap_index(region: MemoryRegion<PhysAddr>, paddr: PhysAddr) -> (usize, usize) {
+    let page_offset = (paddr - region.start()) / PAGE_SIZE;
+    let index = page_offset / u64::BITS as usize;
+    let bit = page_offset % u64::BITS as usize;
+
+    (index, bit)
 }
 
 pub fn init_valid_bitmap_ptr(region: MemoryRegion<PhysAddr>, bitmap: *mut u64) {
@@ -115,6 +125,19 @@ pub fn valid_bitmap_valid_page(paddr: PhysAddr) -> bool {
     vb_ref.check_page(paddr)
 }
 
+#[derive(Copy, Clone)]
+enum BitmapOp {
+    Set,
+    Clear,
+    CheckValid,
+    CheckInvalid,
+}
+
+#[derive(Debug)]
+enum BitmapError {
+    Abort,
+}
+
 #[derive(Debug)]
 enum ValidBitmapMem {
     Ptr(*mut u64),
@@ -181,11 +204,7 @@ impl ValidBitmap {
 
     #[inline(always)]
     fn index(&self, paddr: PhysAddr) -> (usize, usize) {
-        let page_offset = (paddr - self.region.start()) / PAGE_SIZE;
-        let index = page_offset / u64::BITS as usize;
-        let bit = page_offset % u64::BITS as usize;
-
-        (index, bit)
+        bitmap_index(self.region, paddr)
     }
 
     fn clear_all(&mut self) {
@@ -412,3 +431,141 @@ impl ValidBitmap {
 }
 
 unsafe impl Send for ValidBitmap {}
+
+#[derive(Debug)]
+pub struct AtomicValidBitmap {
+    region: MemoryRegion<PhysAddr>,
+    bitmap: Vec<PageRef>,
+}
+
+impl AtomicValidBitmap {
+    pub const fn new() -> Self {
+        AtomicValidBitmap {
+            region: MemoryRegion::from_addresses(PhysAddr::null(), PhysAddr::null()),
+            bitmap: Vec::new(),
+        }
+    }
+
+    pub fn set_region(&mut self, region: MemoryRegion<PhysAddr>) {
+        self.region = region;
+    }
+
+    pub fn set_bitmap(&mut self, bitmap: Vec<PageRef>) {
+        self.bitmap = bitmap;
+    }
+
+    pub fn check_addr_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) -> bool {
+        check_addr_range(self.region, paddr_begin, paddr_end)
+    }
+
+    pub fn clear_all(&mut self) {
+        for page_ref in self.bitmap.iter_mut() {
+            unsafe {
+                let ptr = page_ref.as_mut() as *mut [u8; PAGE_SIZE] as *mut AtomicU64;
+                ptr::write_bytes(ptr, 0, PAGE_N64);
+            }
+        }
+    }
+
+    pub fn bitmap_npages(&self) -> usize {
+        bitmap_bytes(self.region) / PAGE_SIZE
+    }
+
+    fn initialized(&self) -> bool {
+        !self.bitmap.is_empty()
+    }
+
+    fn handle_bitmap_word(&self, op: BitmapOp, index: usize, mask: u64) -> Result<(), BitmapError> {
+        let page_refs = self.bitmap.as_slice();
+        let (idx, off) = (index / PAGE_N64, index % PAGE_N64);
+        unsafe {
+            let ptr = (page_refs[idx].as_ref() as *const [u8; PAGE_SIZE] as *const AtomicU64)
+                .wrapping_add(off);
+            match op {
+                BitmapOp::Set => {
+                    ptr.as_ref().unwrap().fetch_or(mask, Ordering::AcqRel);
+                    Ok(())
+                }
+                BitmapOp::Clear => {
+                    ptr.as_ref().unwrap().fetch_and(!mask, Ordering::AcqRel);
+                    Ok(())
+                }
+                BitmapOp::CheckValid => {
+                    if ptr.as_ref().unwrap().load(Ordering::Acquire) & mask == mask {
+                        Ok(())
+                    } else {
+                        Err(BitmapError::Abort)
+                    }
+                }
+                BitmapOp::CheckInvalid => {
+                    if ptr.as_ref().unwrap().load(Ordering::Acquire) & mask == 0 {
+                        Ok(())
+                    } else {
+                        Err(BitmapError::Abort)
+                    }
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn index(&self, paddr: PhysAddr) -> (usize, usize) {
+        bitmap_index(self.region, paddr)
+    }
+
+    fn handle_range(
+        &self,
+        paddr_begin: PhysAddr,
+        paddr_end: PhysAddr,
+        op: BitmapOp,
+    ) -> Result<(), BitmapError> {
+        if !self.initialized() {
+            return Err(BitmapError::Abort);
+        }
+
+        // All ones.
+        let mask = !0u64;
+
+        let (index_head, bit_head_begin) = self.index(paddr_begin);
+        let (index_tail, bit_tail_end) = self.index(paddr_end);
+        if index_head != index_tail {
+            let mask_head = mask >> bit_head_begin << bit_head_begin;
+            self.handle_bitmap_word(op, index_head, mask_head)?;
+
+            for index in (index_head + 1)..index_tail {
+                self.handle_bitmap_word(op, index, !0u64)?;
+            }
+
+            if bit_tail_end != 0 {
+                let mask_tail = mask << (64 - bit_tail_end) >> (64 - bit_tail_end);
+                self.handle_bitmap_word(op, index_tail, mask_tail)?;
+            }
+        } else {
+            let mask = mask >> bit_head_begin << bit_head_begin;
+            let mask = mask << (64 - bit_tail_end) >> (64 - bit_tail_end);
+            self.handle_bitmap_word(op, index_head, mask)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn set_valid_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) {
+        self.handle_range(paddr_begin, paddr_end, BitmapOp::Set)
+            .expect("Failed to set valid range");
+    }
+
+    pub fn clear_valid_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) {
+        self.handle_range(paddr_begin, paddr_end, BitmapOp::Clear)
+            .expect("Failed to clear valid range");
+    }
+
+    pub fn is_valid_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) -> bool {
+        self.handle_range(paddr_begin, paddr_end, BitmapOp::CheckValid)
+            .is_ok()
+    }
+
+    pub fn is_invalid_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) -> bool {
+        self.handle_range(paddr_begin, paddr_end, BitmapOp::CheckInvalid)
+            .is_ok()
+    }
+}
