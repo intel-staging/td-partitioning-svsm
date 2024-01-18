@@ -274,3 +274,88 @@ impl Address for VirtAddr {
             .map(|addr| sign_extend(addr).into())
     }
 }
+
+macro_rules! guest_addr_impl {
+    ($structname: ident) => {
+        impl $structname {
+            pub const fn new(p: InnerAddr) -> Self {
+                Self(p)
+            }
+            pub const fn null() -> Self {
+                Self(0)
+            }
+        }
+
+        impl fmt::Display for $structname {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::Display::fmt(&self.0, f)
+            }
+        }
+
+        impl fmt::LowerHex for $structname {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::LowerHex::fmt(&self.0, f)
+            }
+        }
+
+        impl From<InnerAddr> for $structname {
+            fn from(addr: InnerAddr) -> $structname {
+                Self(addr)
+            }
+        }
+
+        impl From<$structname> for InnerAddr {
+            fn from(addr: $structname) -> InnerAddr {
+                addr.0
+            }
+        }
+
+        impl From<u64> for $structname {
+            fn from(addr: u64) -> $structname {
+                let addr: usize = addr.try_into().unwrap();
+                $structname::from(addr)
+            }
+        }
+
+        impl From<$structname> for u64 {
+            fn from(addr: $structname) -> u64 {
+                addr.0 as u64
+            }
+        }
+
+        impl ops::Add<InnerAddr> for $structname {
+            type Output = Self;
+            fn add(self, other: InnerAddr) -> Self {
+                $structname::from(self.0 + other)
+            }
+        }
+
+        impl Address for $structname {}
+    };
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct GuestPhysAddr(InnerAddr);
+guest_addr_impl!(GuestPhysAddr);
+
+impl GuestPhysAddr {
+    pub fn to_host_phys_addr(&self) -> PhysAddr {
+        // GPA == HPA
+        PhysAddr::from(self.0)
+    }
+}
+
+// Substracting two addresses produces an usize instead of an address,
+// since we normally do this to compute the size of a memory region.
+impl ops::Sub<GuestPhysAddr> for GuestPhysAddr {
+    type Output = InnerAddr;
+    fn sub(self, other: GuestPhysAddr) -> Self::Output {
+        self.0 - other.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct GuestVirtAddr(InnerAddr);
+guest_addr_impl!(GuestVirtAddr);
