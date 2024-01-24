@@ -4,6 +4,8 @@
 //
 // Author: Roy Hopkins <rhopkins@suse.de>
 
+use bitflags::bitflags;
+
 #[repr(C, packed)]
 #[derive(Default, Debug, Clone, Copy)]
 pub struct X86GeneralRegs {
@@ -43,4 +45,28 @@ pub struct X86InterruptFrame {
     pub flags: usize,
     pub rsp: usize,
     pub ss: usize,
+}
+
+bitflags! {
+    pub struct RFlags: u64 {
+        const CF    = 1 << 0;
+        const FIXED = 1 << 1;
+        const PF    = 1 << 2;
+        const AF    = 1 << 4;
+        const ZF    = 1 << 6;
+        const SF    = 1 << 7;
+        const TF    = 1 << 8;
+        const IF    = 1 << 9;
+        const DF    = 1 << 10;
+        const OF    = 1 << 11;
+        const IOPL  = 3 << 12;
+        const NT    = 1 << 14;
+        const MD    = 1 << 15;
+        const RF    = 1 << 16;
+        const VM    = 1 << 17;
+        const AC    = 1 << 18;
+        const VIF   = 1 << 19;
+        const VIP   = 1 << 20;
+        const ID    = 1 << 21;
+    }
 }
