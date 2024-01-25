@@ -7,6 +7,7 @@
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ErrExcp {
     GP(u32),
+    UD,
 }
 
 #[derive(Clone, Copy, Debug)]

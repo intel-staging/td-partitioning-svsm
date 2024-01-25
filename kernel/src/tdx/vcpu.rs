@@ -9,6 +9,7 @@ use super::tdcall::tdvmcall_sti_halt;
 use super::utils::{td_flush_vpid_global, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet};
 use super::vmcs::Vmcs;
 use super::vmcs_lib::VmcsField32ReadOnly;
+use super::vmexit::VmExit;
 use crate::cpu::interrupts::{disable_irq, enable_irq};
 use crate::cpu::msr::{write_msr, MSR_IA32_PAT, MSR_IA32_PRED_CMD};
 
@@ -96,8 +97,17 @@ impl Vcpu {
 
                     // With pending interrupt in svsm, vmenter actually didn't
                     // happen so there is no valid vmexit reason to handle.
-                    if let Some(_l2exit_info) = l2exit_info {
-                        //TODO: handle vmexit
+                    if let Some(l2exit_info) = l2exit_info {
+                        //TODO: handle undelivered event first.
+                        let vmexit = VmExit::new(l2exit_info);
+                        if let Err(e) = vmexit.handle_vmexits() {
+                            log::error!(
+                                "vcpu{} handle vmexit {:x?} failed: {:x?}",
+                                self.apic_id,
+                                vmexit.reason,
+                                e
+                            );
+                        }
                     }
                     // TODO: Check if any new state is requested
                 }
