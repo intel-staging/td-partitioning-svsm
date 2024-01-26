@@ -28,6 +28,11 @@ pub fn init_kernel_mapping_info(vstart: VirtAddr, vend: VirtAddr, pstart: PhysAd
         .expect("Already initialized kernel mapping info");
 }
 
+pub fn is_kernel_phys_addr_valid(paddr: PhysAddr) -> bool {
+    let size: usize = KERNEL_MAPPING.virt_end - KERNEL_MAPPING.virt_start;
+    paddr >= KERNEL_MAPPING.phys_start && paddr < (KERNEL_MAPPING.phys_start + size)
+}
+
 #[cfg(target_os = "none")]
 pub fn virt_to_phys(vaddr: VirtAddr) -> PhysAddr {
     if vaddr < KERNEL_MAPPING.virt_start || vaddr >= KERNEL_MAPPING.virt_end {
@@ -41,8 +46,7 @@ pub fn virt_to_phys(vaddr: VirtAddr) -> PhysAddr {
 
 #[cfg(target_os = "none")]
 pub fn phys_to_virt(paddr: PhysAddr) -> VirtAddr {
-    let size: usize = KERNEL_MAPPING.virt_end - KERNEL_MAPPING.virt_start;
-    if paddr < KERNEL_MAPPING.phys_start || paddr >= KERNEL_MAPPING.phys_start + size {
+    if !is_kernel_phys_addr_valid(paddr) {
         panic!("Invalid physical address {:#018x}", paddr);
     }
 
