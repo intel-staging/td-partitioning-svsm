@@ -14,6 +14,7 @@ use super::utils::TdpVmId;
 use super::vmcs_lib::VmcsField64Guest;
 use crate::cpu::control_regs::CR0Flags;
 use crate::cpu::cpuid::cpuid;
+use crate::cpu::efer::EFERFlags;
 use crate::cpu::msr::*;
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
@@ -318,6 +319,50 @@ impl MsrEmulation for PerfStatusVmsr {
     }
 }
 
+#[derive(Debug)]
+struct MiscEnableVmsr(MsrIa32MiscEnable);
+
+impl BoxedMsrEmulation for MiscEnableVmsr {
+    fn new(_msr: u32) -> Self {
+        let mut misc = MsrIa32MiscEnable::from_bits_retain(read_msr(MSR_IA32_MISC_ENABLE).unwrap());
+        misc.remove(MsrIa32MiscEnable::EN_EIST);
+        // MONITOR/MWAIT cause #VE unconditionally
+        misc.remove(MsrIa32MiscEnable::EN_MONITOR);
+        misc.remove(MsrIa32MiscEnable::XD_DISABLE);
+        MiscEnableVmsr(misc)
+    }
+}
+
+impl MsrEmulation for MiscEnableVmsr {
+    fn address(&self) -> u32 {
+        MSR_IA32_MISC_ENABLE
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        Ok(self.0.bits())
+    }
+
+    fn write(&mut self, vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        let mut misc = MsrIa32MiscEnable::from_bits_retain(data);
+
+        if misc.contains(MsrIa32MiscEnable::EN_MONITOR) {
+            return Err(TdxError::Vmsr);
+        }
+        // According to Intel SDM Vol 4 2.1 & Vol 3A 4.1.4,
+        // EFER.NXE should be cleared if guest disables XD in IA32_MISC_ENABLE
+        if misc.contains(MsrIa32MiscEnable::XD_DISABLE)
+            && !self.0.contains(MsrIa32MiscEnable::XD_DISABLE)
+        {
+            let mut efer = EFERFlags::from_bits_retain(this_vcpu(vm_id).get_ctx().get_efer());
+            efer.remove(EFERFlags::NXE);
+            this_vcpu_mut(vm_id).get_ctx_mut().set_efer(efer.bits());
+        }
+        misc.remove(MsrIa32MiscEnable::EN_EIST);
+        self.0 = misc;
+        Ok(())
+    }
+}
+
 const PASSTHROUGH_MSRS: &[u32] = &[
     MSR_IA32_SPEC_CTRL,
     MSR_IA32_PRED_CMD,
@@ -351,6 +396,7 @@ const EMULATED_MSRS: &[EmulatedMsrs] = &[
     (MSR_IA32_MCG_STATUS, McgStatusVmsr::alloc),
     (MSR_IA32_PERF_STATUS, PerfStatusVmsr::alloc),
     (MSR_IA32_PERF_CTL, NoopMsr::alloc),
+    (MSR_IA32_MISC_ENABLE, MiscEnableVmsr::alloc),
     (MSR_IA32_PAT, PatVmsr::alloc),
     (EFER, EferVmsr::alloc),
     (MSR_IA32_CSTAR, IgnoredRwMsr::alloc),

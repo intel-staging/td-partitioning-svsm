@@ -26,6 +26,7 @@ pub const MSR_IA32_MCG_CAP: u32 = 0x0000_0179;
 pub const MSR_IA32_MCG_STATUS: u32 = 0x0000_017A;
 pub const MSR_IA32_PERF_STATUS: u32 = 0x0000_0198;
 pub const MSR_IA32_PERF_CTL: u32 = 0x0000_0199;
+pub const MSR_IA32_MISC_ENABLE: u32 = 0x0000_01A0;
 pub const MSR_IA32_XFD: u32 = 0x0000_01C4;
 pub const MSR_IA32_DEBUGCTL: u32 = 0x0000_01D9;
 pub const MSR_IA32_PAT: u32 = 0x0000_0277;
@@ -69,6 +70,15 @@ pub const PAT_POWER_ON_VALUE: u64 = PAT_MEM_TYPE_WRITE_BACK
 bitflags! {
     pub struct MsrIa32FeatureControl: u64 {
         const LOCK          = 1 << 0;
+    }
+}
+
+bitflags! {
+    #[derive(Debug)]
+    pub struct MsrIa32MiscEnable: u64 {
+        const EN_EIST       = 1 << 16;
+        const EN_MONITOR    = 1 << 18;
+        const XD_DISABLE    = 1 << 34;
     }
 }
 
