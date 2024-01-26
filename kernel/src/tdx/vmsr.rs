@@ -539,6 +539,31 @@ impl MsrEmulation for TscDeadlineVmsr {
     }
 }
 
+#[derive(Debug)]
+struct ApicBaseVmsr;
+
+impl BoxedMsrEmulation for ApicBaseVmsr {
+    fn new(_msr: u32) -> Self {
+        ApicBaseVmsr
+    }
+}
+
+impl MsrEmulation for ApicBaseVmsr {
+    fn address(&self) -> u32 {
+        MSR_IA32_APIC_BASE
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        // TODO: APIC_BASE msr should be emulated by vlapic.
+        Err(TdxError::Vmsr)
+    }
+
+    fn write(&mut self, _vm_id: TdpVmId, _data: u64) -> Result<(), TdxError> {
+        // TODO: APIC_BASE msr should be emulated by vlapic.
+        Err(TdxError::Vmsr)
+    }
+}
+
 const PASSTHROUGH_MSRS: &[u32] = &[
     MSR_IA32_SPEC_CTRL,
     MSR_IA32_PRED_CMD,
@@ -566,6 +591,7 @@ type EmulatedMsrs = (u32, fn(u32) -> Box<dyn MsrEmulation>);
 const EMULATED_MSRS: &[EmulatedMsrs] = &[
     (MSR_IA32_TIME_STAMP_COUNTER, TscVmsr::alloc),
     (MSR_IA32_PLATFORM_ID, ZeroedRoMsr::alloc),
+    (MSR_IA32_APIC_BASE, ApicBaseVmsr::alloc),
     (MSR_SMI_COUNT, ZeroedRoMsr::alloc),
     (MSR_IA32_FEATURE_CONTROL, FeatureControlVmsr::alloc),
     (MSR_IA32_TSC_ADJUST, TscAdjustVmsr::alloc),

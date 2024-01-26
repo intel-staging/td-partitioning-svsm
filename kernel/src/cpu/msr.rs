@@ -10,6 +10,7 @@ use core::arch::asm;
 
 pub const MSR_IA32_TIME_STAMP_COUNTER: u32 = 0x0000_0010;
 pub const MSR_IA32_PLATFORM_ID: u32 = 0x0000_0017;
+pub const MSR_IA32_APIC_BASE: u32 = 0x0000_001B;
 pub const MSR_SMI_COUNT: u32 = 0x0000_0034;
 pub const MSR_IA32_FEATURE_CONTROL: u32 = 0x0000_003A;
 pub const MSR_IA32_TSC_ADJUST: u32 = 0x0000_003B;
