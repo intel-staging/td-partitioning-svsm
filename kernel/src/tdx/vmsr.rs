@@ -260,6 +260,34 @@ impl MsrEmulation for FeatureControlVmsr {
     }
 }
 
+#[derive(Debug)]
+struct McgStatusVmsr;
+
+impl BoxedMsrEmulation for McgStatusVmsr {
+    fn new(_msr: u32) -> Self {
+        McgStatusVmsr
+    }
+}
+
+impl MsrEmulation for McgStatusVmsr {
+    fn address(&self) -> u32 {
+        MSR_IA32_MCG_STATUS
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        Ok(0)
+    }
+
+    fn write(&mut self, _vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        if data == 0 {
+            Ok(())
+        } else {
+            log::info!("Unsupported MCG_STATUS val: 0x{:x}", data);
+            Err(TdxError::Vmsr)
+        }
+    }
+}
+
 const PASSTHROUGH_MSRS: &[u32] = &[
     MSR_IA32_SPEC_CTRL,
     MSR_IA32_PRED_CMD,
@@ -290,6 +318,7 @@ const EMULATED_MSRS: &[EmulatedMsrs] = &[
     (MSR_PLATFORM_INFO, ZeroedRoMsr::alloc),
     (MSR_MISC_FEATURE_ENABLES, ZeroedRoMsr::alloc),
     (MSR_IA32_MCG_CAP, ZeroedRoMsr::alloc),
+    (MSR_IA32_MCG_STATUS, McgStatusVmsr::alloc),
     (MSR_IA32_PERF_CTL, NoopMsr::alloc),
     (MSR_IA32_PAT, PatVmsr::alloc),
     (EFER, EferVmsr::alloc),
