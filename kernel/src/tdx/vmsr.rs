@@ -13,6 +13,7 @@ use super::tdcall::{tdvmcall_rdmsr, tdvmcall_wrmsr, TdVmcallError};
 use super::utils::TdpVmId;
 use super::vmcs_lib::VmcsField64Guest;
 use crate::cpu::control_regs::CR0Flags;
+use crate::cpu::cpuid::cpuid;
 use crate::cpu::msr::*;
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
@@ -288,6 +289,35 @@ impl MsrEmulation for McgStatusVmsr {
     }
 }
 
+#[derive(Debug)]
+struct PerfStatusVmsr;
+
+impl BoxedMsrEmulation for PerfStatusVmsr {
+    fn new(_msr: u32) -> Self {
+        PerfStatusVmsr
+    }
+}
+
+impl MsrEmulation for PerfStatusVmsr {
+    fn address(&self) -> u32 {
+        MSR_IA32_PERF_STATUS
+    }
+
+    // Use the base frequency state of pCPU as the emulated reg field:
+    //   - IA32_PERF_STATUS[15:0] Current performance State Value
+    //
+    // Assuming (base frequency ratio << 8) is a valid state value for
+    // all CPU models
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        // CPUID.16H:eax[15:0] Base CPU Frequency (MHz)
+        // CPUID.16H:ecx[15:0] Bus Frequency (MHz)
+        // ratio = CPU_frequency/bus_frequency
+        let cpuid16h = cpuid(0x16).unwrap();
+        let data = ((cpuid16h.eax / cpuid16h.ecx) & 0xffu32) << 8;
+        Ok(data.into())
+    }
+}
+
 const PASSTHROUGH_MSRS: &[u32] = &[
     MSR_IA32_SPEC_CTRL,
     MSR_IA32_PRED_CMD,
@@ -319,6 +349,7 @@ const EMULATED_MSRS: &[EmulatedMsrs] = &[
     (MSR_MISC_FEATURE_ENABLES, ZeroedRoMsr::alloc),
     (MSR_IA32_MCG_CAP, ZeroedRoMsr::alloc),
     (MSR_IA32_MCG_STATUS, McgStatusVmsr::alloc),
+    (MSR_IA32_PERF_STATUS, PerfStatusVmsr::alloc),
     (MSR_IA32_PERF_CTL, NoopMsr::alloc),
     (MSR_IA32_PAT, PatVmsr::alloc),
     (EFER, EferVmsr::alloc),
