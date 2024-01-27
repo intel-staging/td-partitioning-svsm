@@ -6,15 +6,20 @@
 
 use super::error::{ErrExcp, TdxError};
 use super::gctx::RegCache;
+use super::gmem::copy_from_gpa;
 use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::utils::TdpVmId;
+use super::vmcs::Vmcs;
 use super::vmcs_lib::{VmEntryControls, VmcsField32Control, VmcsField64Control, VmcsField64Guest};
+use crate::address::GuestPhysAddr;
 use crate::cpu::control_regs::{read_cr2, write_cr2, CR0Flags, CR4Flags};
 use crate::cpu::efer::EFERFlags;
+use crate::cpu::features::cpu_max_physaddr_bits;
 use crate::cpu::msr::{
     read_msr, MSR_IA32_VMX_CR0_FIXED0, MSR_IA32_VMX_CR0_FIXED1, MSR_IA32_VMX_CR4_FIXED0,
     MSR_IA32_VMX_CR4_FIXED1,
 };
+use crate::mm::pagetable::PTEntryFlags;
 use crate::utils::immut_after_init::ImmutAfterInitCell;
 use lazy_static::lazy_static;
 
@@ -234,6 +239,48 @@ impl GuestCpuCrRegs {
         (v & CR4_CONFIGS.reserved_mask) == CR4_CONFIGS.reserved_guest_bits
     }
 
+    fn load_pdptrs(&mut self, vmcs: &Vmcs) -> Result<(), TdxError> {
+        let cr3 = GuestPhysAddr::from(self.get_cr3() & 0xFFFFFFE0);
+        let max_physaddr_bits = cpu_max_physaddr_bits();
+        let pdpte_fixed_rsvd_bits = (PTEntryFlags::WRITABLE
+            | PTEntryFlags::USER
+            | PTEntryFlags::ACCESSED
+            | PTEntryFlags::DIRTY
+            | PTEntryFlags::HUGE
+            | PTEntryFlags::GLOBAL)
+            .bits();
+        let rsvd_mask_bits = if max_physaddr_bits > 63 {
+            pdpte_fixed_rsvd_bits
+        } else {
+            (((1 << (63 - max_physaddr_bits + 1)) - 1) << max_physaddr_bits) | pdpte_fixed_rsvd_bits
+        };
+
+        let mut pdpte: [u64; 4] = [0; 4];
+        for (i, v) in pdpte.iter_mut().enumerate() {
+            *v = copy_from_gpa::<u64>(cr3 + i * core::mem::size_of::<u64>()).map_err(|e| {
+                log::error!(
+                    "Failed to copy from GPA 0x{:x} when load PDPTR: {:?}",
+                    cr3 + i * core::mem::size_of::<u64>(),
+                    e
+                );
+                TdxError::InjectExcp(ErrExcp::GP(0))
+            })?;
+            if PTEntryFlags::from_bits_truncate(*v).contains(PTEntryFlags::PRESENT)
+                && (*v & rsvd_mask_bits) != 0
+            {
+                log::error!("Enable PAE failed due to invalid pdpte 0x{:x}", *v);
+                return Err(TdxError::InjectExcp(ErrExcp::GP(0)));
+            }
+        }
+
+        vmcs.write64(VmcsField64Guest::PDPTR0, pdpte[0]);
+        vmcs.write64(VmcsField64Guest::PDPTR1, pdpte[1]);
+        vmcs.write64(VmcsField64Guest::PDPTR2, pdpte[2]);
+        vmcs.write64(VmcsField64Guest::PDPTR3, pdpte[3]);
+
+        Ok(())
+    }
+
     fn get_effective_cr0(
         &self,
         val: u64,
@@ -323,7 +370,8 @@ impl GuestCpuCrRegs {
                     );
                     ctx.set_efer((efer | EFERFlags::LMA).bits());
                 } else if cr4.contains(CR4Flags::PAE) {
-                    // TODO: Enable PAE by load PDPTR
+                    // Enable PAE
+                    self.load_pdptrs(vmcs)?;
                 }
             } else {
                 // Disable PG
@@ -384,7 +432,8 @@ impl GuestCpuCrRegs {
                 && CR0Flags::from_bits_truncate(self.get_cr0()).contains(CR0Flags::PG)
                 && !efer.contains(EFERFlags::LMA)
             {
-                // TODO: Enable PAE
+                // Enable PAE
+                self.load_pdptrs(this_vcpu(vm_id).get_vmcs())?;
             }
         }
 

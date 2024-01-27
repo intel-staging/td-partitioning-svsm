@@ -282,7 +282,6 @@ pub fn convert_guest_mem(
     }
 }
 
-#[allow(dead_code)]
 pub fn copy_from_gpa<T>(gpa: GuestPhysAddr) -> Result<T, TdxError>
 where
     T: Sized + Copy,
