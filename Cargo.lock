@@ -581,6 +581,7 @@ dependencies = [
  "igvm_defs",
  "intrusive-collections",
  "lazy_static",
+ "libmstpm",
  "log",
  "memoffset",
  "packit",
