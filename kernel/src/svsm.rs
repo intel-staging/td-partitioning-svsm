@@ -53,6 +53,8 @@ use svsm::task::{create_kernel_task, schedule_init, TASK_FLAG_SHARE_PT};
 use svsm::tdx::run_tdpvp;
 use svsm::types::{PageSize, GUEST_VMPL, PAGE_SIZE};
 use svsm::utils::{halt, immut_after_init::ImmutAfterInitCell, zero_mem_region};
+#[cfg(feature = "mstpm")]
+use svsm::vtpm::vtpm_init;
 
 use svsm::mm::validate::{init_valid_bitmap_ptr, migrate_valid_bitmap};
 
@@ -496,6 +498,9 @@ pub extern "C" fn svsm_main() {
             prepare_fw_launch(fw_meta).expect("Failed to setup guest VMSA/CAA");
         }
     }
+
+    #[cfg(feature = "mstpm")]
+    vtpm_init().expect("vTPM failed to initialize");
 
     virt_log_usage();
 
