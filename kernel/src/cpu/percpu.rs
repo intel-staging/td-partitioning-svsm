@@ -34,6 +34,7 @@ use crate::types::{PAGE_SHIFT, PAGE_SHIFT_2M, PAGE_SIZE, PAGE_SIZE_2M, SVSM_TR_F
 use crate::utils::MemoryRegion;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::any::Any;
 use core::cell::UnsafeCell;
 use core::mem::size_of;
 use core::ops::{Deref, DerefMut};
@@ -232,6 +233,22 @@ impl PerCpuShared {
     }
 }
 
+/// PerCpuArch trait provide general purposes interfaces which can be implemented
+/// by different CPU architectures.
+pub trait PerCpuArch: core::fmt::Debug {
+    /// Downcast as immutable reference
+    fn as_any(&self) -> &dyn Any;
+}
+
+#[derive(Debug)]
+struct GeneralPerCpuArch;
+
+impl PerCpuArch for GeneralPerCpuArch {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 #[derive(Debug)]
 pub struct PerCpu {
     pub shared: &'static PerCpuShared,
@@ -263,13 +280,16 @@ pub struct PerCpu {
     /// WaitQueue for request processing
     request_waitqueue: WaitQueue,
 
+    /// Implements PerCpuArch trait to run CPU architecture specific code.
+    pub arch: Arc<dyn PerCpuArch>,
+
     // The borrow count tuple holds (total, mutable) borrow counts.
     #[cfg(debug_assertions)]
     borrow_count: (usize, usize),
 }
 
 impl PerCpu {
-    fn new(apic_id: u32, shared: &'static PerCpuShared) -> Self {
+    fn new(apic_id: u32, shared: &'static PerCpuShared, arch: Arc<dyn PerCpuArch>) -> Self {
         PerCpu {
             shared,
             online: AtomicBool::new(false),
@@ -287,6 +307,7 @@ impl PerCpu {
             runqueue: RWLock::new(RunQueue::new()),
             current_stack: MemoryRegion::new(VirtAddr::null(), 0),
             request_waitqueue: WaitQueue::new(),
+            arch,
 
             // Every new CPU is constructed with via a raw pointer so no
             // borrow is active at the time of construction.
@@ -310,9 +331,11 @@ impl PerCpu {
             let percpu_shared = shared_vaddr.as_mut_ptr::<PerCpuShared>();
             (*percpu_shared) = PerCpuShared::new();
 
+            let arch = Arc::new(GeneralPerCpuArch);
+
             let percpu = vaddr.as_mut_ptr::<PerCpu>();
 
-            (*percpu) = PerCpu::new(apic_id, &*percpu_shared);
+            core::ptr::write(percpu, PerCpu::new(apic_id, &*percpu_shared, arch));
 
             PERCPU_AREAS.push(PerCpuInfo::new(apic_id, shared_vaddr));
             Ok(percpu)
