@@ -104,7 +104,6 @@ impl TdPerCpu {
     }
 }
 
-#[allow(dead_code)]
 pub fn this_vcpu(vm_id: TdpVmId) -> &'static Vcpu {
     if let Some(td_percpu) = this_cpu().arch.as_any().downcast_ref::<TdPerCpu>() {
         if let Some(vaddr) = td_percpu.tdpvps[vm_id.index()].get() {

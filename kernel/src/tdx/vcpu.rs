@@ -54,6 +54,10 @@ impl Vcpu {
         self.ctx.init(vm_id);
     }
 
+    pub fn get_vmcs(&self) -> &Vmcs {
+        &self.vmcs
+    }
+
     pub fn run(&mut self) {
         if self.is_bsp {
             self.update_cur_state(VcpuState::PowerOnReset);
