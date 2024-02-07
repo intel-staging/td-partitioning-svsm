@@ -183,6 +183,43 @@ bitflags! {
 
 bitflags! {
     #[derive(Copy, Clone, Debug)]
+    pub struct Cpuid07_0Ebx: u32 {
+        const FSGSBASE      = 1 << 0;
+        const TSC_ADJUST    = 1 << 1;
+        const SGX           = 1 << 2;
+        const BMI1          = 1 << 3;
+        const HLT           = 1 << 4;
+        const AVX2          = 1 << 5;
+        const FDP_EXCP_ONLY = 1 << 6;
+        const SMEP          = 1 << 7;
+        const BMI2          = 1 << 8;
+        const ERMS          = 1 << 9;
+        const INVPCID       = 1 << 10;
+        const RTM           = 1 << 11;
+        const RDTM          = 1 << 12;
+        const DFPU_CS_DS    = 1 << 13;
+        const MPX           = 1 << 14;
+        const RDTA          = 1 << 15;
+        const AVX512F       = 1 << 16;
+        const AVX512DQ      = 1 << 17;
+        const RDSEED        = 1 << 18;
+        const ADX           = 1 << 19;
+        const SMAP          = 1 << 20;
+        const AVX512_IFMA   = 1 << 21;
+        const CLFLUSHOPT    = 1 << 23;
+        const CLWB          = 1 << 24;
+        const IPT           = 1 << 25;
+        const AVX512PF      = 1 << 26;
+        const AVX512ER      = 1 << 27;
+        const AVX512CD      = 1 << 28;
+        const SHA           = 1 << 29;
+        const AVX512BW      = 1 << 30;
+        const AVX512VL      = 1 << 31;
+    }
+}
+
+bitflags! {
+    #[derive(Copy, Clone, Debug)]
     pub struct Cpuid80000001Edx: u32 {
         const SYSCALL       = 1 << 11;
         const NX            = 1 << 20;
