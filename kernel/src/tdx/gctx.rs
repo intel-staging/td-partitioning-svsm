@@ -7,7 +7,7 @@
 use super::percpu::this_vcpu;
 use super::utils::TdpVmId;
 use super::vmcs::Vmcs;
-use super::vmcs_lib::VmcsField64Guest;
+use super::vmcs_lib::{VmcsField16Guest, VmcsField32Guest, VmcsField64Guest};
 use crate::address::VirtAddr;
 use crate::locking::SpinLock;
 use crate::mm::address_space::virt_to_phys;
@@ -138,14 +138,160 @@ struct GuestCpuTdpContext {
     intr_status: u16,
 }
 
+#[derive(Copy, Clone)]
+struct Segment {
+    selector: u16,
+    base: u64,
+    limit: u32,
+    attr: u32,
+}
+
+impl Segment {
+    fn new(selector: u16, base: u64, limit: u32, attr: u32) -> Self {
+        Segment {
+            selector,
+            base,
+            limit,
+            attr,
+        }
+    }
+}
+
+struct SegCache {
+    selector: RegCache<u16>,
+    base: RegCache<u64>,
+    limit: RegCache<u32>,
+    attr: RegCache<u32>,
+}
+
+#[allow(dead_code)]
+impl SegCache {
+    fn get(&self) -> Segment {
+        Segment::new(
+            self.selector.read_cache(),
+            self.base.read_cache(),
+            self.limit.read_cache(),
+            self.attr.read_cache(),
+        )
+    }
+
+    fn set(&mut self, seg: Segment) {
+        self.selector.write_cache(seg.selector);
+        self.base.write_cache(seg.base);
+        self.limit.write_cache(seg.limit);
+        self.attr.write_cache(seg.attr);
+    }
+
+    fn load(&mut self) {
+        self.selector.sync_cache();
+        self.base.sync_cache();
+        self.limit.sync_cache();
+        self.attr.sync_cache();
+    }
+}
+
+macro_rules! seg_cache {
+    ($vm_id: ident, $selector: ident, $base: ident, $limit: ident, $attr: ident) => {
+        SegCache {
+            selector: RegCache::new(
+                $vm_id,
+                Some(|vmcs| vmcs.read16(VmcsField16Guest::$selector)),
+                Some(|vmcs, v| vmcs.write16(VmcsField16Guest::$selector, v)),
+            ),
+            base: RegCache::new(
+                $vm_id,
+                Some(|vmcs| vmcs.read64(VmcsField64Guest::$base)),
+                Some(|vmcs, v| vmcs.write64(VmcsField64Guest::$base, v)),
+            ),
+            limit: RegCache::new(
+                $vm_id,
+                Some(|vmcs| vmcs.read32(VmcsField32Guest::$limit)),
+                Some(|vmcs, v| vmcs.write32(VmcsField32Guest::$limit, v)),
+            ),
+            attr: RegCache::new(
+                $vm_id,
+                Some(|vmcs| vmcs.read32(VmcsField32Guest::$attr)),
+                Some(|vmcs, v| vmcs.write32(VmcsField32Guest::$attr, v)),
+            ),
+        }
+    };
+    ($vm_id: ident, $base: ident, $limit: ident) => {
+        SegCache {
+            selector: RegCache::new($vm_id, None, None),
+            base: RegCache::new(
+                $vm_id,
+                Some(|vmcs| vmcs.read64(VmcsField64Guest::$base)),
+                Some(|vmcs, v| vmcs.write64(VmcsField64Guest::$base, v)),
+            ),
+            limit: RegCache::new(
+                $vm_id,
+                Some(|vmcs| vmcs.read32(VmcsField32Guest::$limit)),
+                Some(|vmcs, v| vmcs.write32(VmcsField32Guest::$limit, v)),
+            ),
+            attr: RegCache::new($vm_id, None, None),
+        }
+    };
+}
+
+struct GuestCpuSegs {
+    idtr: SegCache,
+    gdtr: SegCache,
+    ldtr: SegCache,
+    cs: SegCache,
+    ds: SegCache,
+    es: SegCache,
+    fs: SegCache,
+    gs: SegCache,
+    ss: SegCache,
+    tr: SegCache,
+}
+
+#[allow(dead_code)]
+impl GuestCpuSegs {
+    fn init(&mut self, vm_id: TdpVmId) {
+        self.idtr = seg_cache!(vm_id, IDTR_BASE, IDTR_LIMIT);
+        self.gdtr = seg_cache!(vm_id, GDTR_BASE, GDTR_LIMIT);
+        self.ldtr = seg_cache!(vm_id, LDTR_SELECTOR, LDTR_BASE, LDTR_LIMIT, LDTR_AR_BYTES);
+        self.cs = seg_cache!(vm_id, CS_SELECTOR, CS_BASE, CS_LIMIT, CS_AR_BYTES);
+        self.ds = seg_cache!(vm_id, DS_SELECTOR, DS_BASE, DS_LIMIT, DS_AR_BYTES);
+        self.es = seg_cache!(vm_id, ES_SELECTOR, ES_BASE, ES_LIMIT, ES_AR_BYTES);
+        self.fs = seg_cache!(vm_id, FS_SELECTOR, FS_BASE, FS_LIMIT, FS_AR_BYTES);
+        self.gs = seg_cache!(vm_id, GS_SELECTOR, GS_BASE, GS_LIMIT, GS_AR_BYTES);
+        self.ss = seg_cache!(vm_id, SS_SELECTOR, SS_BASE, SS_LIMIT, SS_AR_BYTES);
+        self.tr = seg_cache!(vm_id, TR_SELECTOR, TR_BASE, TR_LIMIT, TR_AR_BYTES);
+    }
+
+    fn load(&mut self) {
+        self.idtr.load();
+        self.gdtr.load();
+        self.ldtr.load();
+        self.cs.load();
+        self.ds.load();
+        self.es.load();
+        self.fs.load();
+        self.gs.load();
+        self.ss.load();
+        self.tr.load();
+    }
+}
+
 const REAL_MODE_RIP: u64 = 0xfff0;
 const REAL_MODE_RFLAGS: u64 = 0x02;
+const REAL_MODE_BSP_INIT_CODE_SEL: u16 = 0xf000;
+const REAL_MODE_DATA_SEG_AR: u32 = 0x0093;
+const REAL_MODE_CODE_SEG_AR: u32 = 0x009f;
+const REAL_MODE_LDTR_SEG_AR: u32 = 0x0082;
+const REAL_MODE_TR_SEG_AR: u32 = 0x008b;
+const REAL_MODE_SEG_LIMIT: u32 = 0xffff;
+const REAL_MODE_DATA_SEG_BASE: u64 = 0;
+const REAL_MODE_CODE_SEG_BASE: u64 = 0xffff_0000;
 
 pub struct GuestCpuContext {
     vm_id: TdpVmId,
     tdp_ctx: GuestCpuTdpContext,
     tdp_ctx_pa: u64,
     ia32_efer: RegCache<u64>,
+    segs: GuestCpuSegs,
 }
 
 impl GuestCpuContext {
@@ -162,6 +308,7 @@ impl GuestCpuContext {
             None,
             Some(|vmcs, v| vmcs.write64(VmcsField64Guest::IA32_EFER, v)),
         );
+        self.segs.init(vm_id);
     }
 
     pub fn reset(&mut self) {
@@ -169,5 +316,65 @@ impl GuestCpuContext {
         self.tdp_ctx.rip = REAL_MODE_RIP;
         self.tdp_ctx.rflags = REAL_MODE_RFLAGS;
         self.ia32_efer.write_cache(0);
+        self.segs.idtr.set(Segment::new(
+            0,
+            REAL_MODE_DATA_SEG_BASE,
+            REAL_MODE_SEG_LIMIT,
+            0,
+        ));
+        self.segs.gdtr.set(Segment::new(
+            0,
+            REAL_MODE_DATA_SEG_BASE,
+            REAL_MODE_SEG_LIMIT,
+            0,
+        ));
+        self.segs.cs.set(Segment::new(
+            REAL_MODE_BSP_INIT_CODE_SEL,
+            REAL_MODE_CODE_SEG_BASE,
+            REAL_MODE_SEG_LIMIT,
+            REAL_MODE_CODE_SEG_AR,
+        ));
+        self.segs.ds.set(Segment::new(
+            REAL_MODE_BSP_INIT_CODE_SEL,
+            REAL_MODE_DATA_SEG_BASE,
+            REAL_MODE_SEG_LIMIT,
+            REAL_MODE_DATA_SEG_AR,
+        ));
+        self.segs.es.set(Segment::new(
+            REAL_MODE_BSP_INIT_CODE_SEL,
+            REAL_MODE_DATA_SEG_BASE,
+            REAL_MODE_SEG_LIMIT,
+            REAL_MODE_DATA_SEG_AR,
+        ));
+        self.segs.fs.set(Segment::new(
+            REAL_MODE_BSP_INIT_CODE_SEL,
+            REAL_MODE_DATA_SEG_BASE,
+            REAL_MODE_SEG_LIMIT,
+            REAL_MODE_DATA_SEG_AR,
+        ));
+        self.segs.gs.set(Segment::new(
+            REAL_MODE_BSP_INIT_CODE_SEL,
+            REAL_MODE_DATA_SEG_BASE,
+            REAL_MODE_SEG_LIMIT,
+            REAL_MODE_DATA_SEG_AR,
+        ));
+        self.segs.ss.set(Segment::new(
+            REAL_MODE_BSP_INIT_CODE_SEL,
+            REAL_MODE_DATA_SEG_BASE,
+            REAL_MODE_SEG_LIMIT,
+            REAL_MODE_DATA_SEG_AR,
+        ));
+        self.segs.tr.set(Segment::new(
+            0,
+            REAL_MODE_DATA_SEG_BASE,
+            REAL_MODE_SEG_LIMIT,
+            REAL_MODE_TR_SEG_AR,
+        ));
+        self.segs.ldtr.set(Segment::new(
+            0,
+            REAL_MODE_DATA_SEG_BASE,
+            REAL_MODE_SEG_LIMIT,
+            REAL_MODE_LDTR_SEG_AR,
+        ));
     }
 }

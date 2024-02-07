@@ -26,7 +26,6 @@ pub struct Vmcs {
     xsave_enabled: bool,
 }
 
-#[allow(dead_code)]
 impl Vmcs {
     pub fn init(&mut self, vm_id: TdpVmId, apic_id: u32) {
         self.vm_id = vm_id;
