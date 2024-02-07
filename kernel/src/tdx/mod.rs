@@ -17,6 +17,7 @@ mod vcpuid;
 mod vcr;
 mod vmcs;
 mod vmcs_lib;
+mod vmsr;
 
 pub use percpu::TdPerCpu;
 pub use tdcall::{

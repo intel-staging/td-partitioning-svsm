@@ -27,6 +27,8 @@ pub enum TdxError {
     UnalignedPhysAddr,
     // Vm read related error
     VmRD(u64),
+    // Vmsr related error
+    Vmsr,
     // Vp write related error
     VpWR(u64, u64),
     // Write Guest Memory failed

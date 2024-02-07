@@ -9,6 +9,7 @@ use super::utils::TdpVmId;
 use super::vcr::GuestCpuCrRegs;
 use super::vmcs::Vmcs;
 use super::vmcs_lib::{VmcsField16Guest, VmcsField32Guest, VmcsField64Guest};
+use super::vmsr::GuestCpuMsrs;
 use crate::address::VirtAddr;
 use crate::locking::SpinLock;
 use crate::mm::address_space::virt_to_phys;
@@ -294,6 +295,7 @@ pub struct GuestCpuContext {
     ia32_efer: RegCache<u64>,
     segs: GuestCpuSegs,
     cr: GuestCpuCrRegs,
+    msrs: GuestCpuMsrs,
 }
 
 impl GuestCpuContext {
@@ -312,6 +314,7 @@ impl GuestCpuContext {
         );
         self.segs.init(vm_id);
         self.cr.init(vm_id);
+        self.msrs.init(vm_id);
     }
 
     pub fn reset(&mut self) {
