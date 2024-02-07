@@ -26,6 +26,10 @@ impl TdpVmId {
             Err(TdxError::InvalidVmId(vm_id))
         }
     }
+
+    pub fn index(&self) -> usize {
+        (self.vm_id - 1) as usize
+    }
 }
 
 const MD_TDCS_NUM_L2_VMS: u64 = 0x9010000100000005;

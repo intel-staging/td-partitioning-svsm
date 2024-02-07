@@ -2,18 +2,43 @@
 //
 // Copyright (C) 2023-2024 Intel Corporation
 //
-// Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
+// Author:
+//  Chuanxiao Dong <chuanxiao.dong@intel.com>
+//  Jason CJ Chen <jason.cj.chen@intel.com>
 
 use super::tdp::init_tdps;
+use super::utils::{TdpVmId, MAX_NUM_L2_VMS};
+use super::vcpu::Vcpu;
+use crate::address::VirtAddr;
 use crate::cpu::percpu::PerCpuArch;
 use crate::error::SvsmError;
+use crate::mm::alloc::{allocate_pages, get_order};
+use crate::types::PAGE_SIZE;
+use crate::utils::zero_mem_region;
 use core::any::Any;
+use core::cell::OnceCell;
+use core::mem::MaybeUninit;
 
-#[derive(Clone, Copy, Debug)]
-#[allow(dead_code)]
+struct TdpVp {
+    vcpu: Vcpu,
+}
+
+impl TdpVp {
+    fn init(&mut self, vm_id: TdpVmId, apic_id: u32, is_bsp: bool) {
+        self.vcpu.init(vm_id, apic_id, is_bsp);
+    }
+
+    fn run(&mut self) {
+        self.vcpu.run();
+        unreachable!("TDX: should never retrun from vcpu run loop");
+    }
+}
+
+#[derive(Debug)]
 pub struct TdPerCpu {
     apic_id: u32,
     is_bsp: bool,
+    tdpvps: [OnceCell<VirtAddr>; MAX_NUM_L2_VMS],
 }
 unsafe impl Send for TdPerCpu {}
 unsafe impl Sync for TdPerCpu {}
@@ -35,6 +60,32 @@ impl PerCpuArch for TdPerCpu {
 
 impl TdPerCpu {
     pub fn new(apic_id: u32, is_bsp: bool) -> Self {
-        Self { apic_id, is_bsp }
+        let tdpvps = {
+            let mut tdpvps: [MaybeUninit<OnceCell<VirtAddr>>; MAX_NUM_L2_VMS] =
+                unsafe { MaybeUninit::uninit().assume_init() };
+            for tdpvp in tdpvps.iter_mut() {
+                *tdpvp = MaybeUninit::new(OnceCell::new());
+            }
+            unsafe { core::mem::transmute::<_, [OnceCell<VirtAddr>; MAX_NUM_L2_VMS]>(tdpvps) }
+        };
+        Self {
+            apic_id,
+            is_bsp,
+            tdpvps,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn run_tdpvp(&self, vm_id: TdpVmId) {
+        let vaddr = self.tdpvps[vm_id.index()].get_or_init(|| {
+            let order = get_order(core::mem::size_of::<TdpVp>());
+            let vaddr = allocate_pages(order).expect("Failed to allocate TdpVp");
+            zero_mem_region(vaddr, vaddr + (1 << order) * PAGE_SIZE);
+            vaddr
+        });
+        let tdpvp = unsafe { &mut *vaddr.as_mut_ptr::<TdpVp>().cast::<TdpVp>() };
+
+        tdpvp.init(vm_id, self.apic_id, self.is_bsp);
+        tdpvp.run();
     }
 }

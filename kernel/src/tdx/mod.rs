@@ -10,6 +10,7 @@ mod percpu;
 mod tdcall;
 mod tdp;
 mod utils;
+mod vcpu;
 
 pub use percpu::TdPerCpu;
 pub use tdcall::{
