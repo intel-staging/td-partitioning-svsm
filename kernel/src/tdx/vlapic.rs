@@ -980,4 +980,29 @@ impl Vlapic {
         }
         Ok(())
     }
+
+    pub fn get_tsc_deadline_msr<F: Fn() -> u64>(&self, get_dlt: F) -> u64 {
+        if !self.lvtt_is_tsc_deadline() || self.timer_expired(rdtsc()).is_none() {
+            0u64
+        } else {
+            get_dlt()
+        }
+    }
+
+    pub fn set_tsc_deadline_msr<F: FnMut(u64)>(&mut self, val: u64, mut set_dlt: F) {
+        if self.lvtt_is_tsc_deadline() {
+            set_dlt(val);
+            if val != 0 {
+                let timeout = val
+                    - this_vcpu(self.vm_id)
+                        .get_vmcs()
+                        .read64(VmcsField64Control::TSC_OFFSET);
+                self.update_timer(timeout, 0);
+                start_tsc_deadline_timer(self.vtimer.timeout);
+            } else {
+                self.update_timer(0, 0);
+                stop_tsc_deadline_timer();
+            }
+        }
+    }
 }

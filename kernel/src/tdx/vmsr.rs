@@ -527,14 +527,16 @@ impl MsrEmulation for TscDeadlineVmsr {
         MSR_IA32_TSC_DEADLINE
     }
 
-    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
-        //TODO: TSC_DEADLINE should be emulated by vlapic.
-        Ok(self.get())
+    fn read(&self, vm_id: TdpVmId) -> Result<u64, TdxError> {
+        let get_dlt = || self.get();
+        Ok(this_vcpu(vm_id).get_vlapic().get_tsc_deadline_msr(get_dlt))
     }
 
-    fn write(&mut self, _vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
-        //TODO: TSC_DEADLINE should be emulated by vlapic.
-        self.set(data);
+    fn write(&mut self, vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        let set_dlt = |d| self.set(d);
+        this_vcpu_mut(vm_id)
+            .get_vlapic_mut()
+            .set_tsc_deadline_msr(data, set_dlt);
         Ok(())
     }
 }
