@@ -13,6 +13,7 @@ use super::utils::{td_add_page_alias, GPAAttr, L2ExitInfo, TdpVmId};
 use super::vcpu_comm::VcpuReqFlags;
 use super::vmcs_lib::{VMX_INT_INFO_ERR_CODE_VALID, VMX_INT_INFO_VALID};
 use crate::address::{Address, GuestPhysAddr};
+use crate::cpu::idt::common::triple_fault;
 use crate::mm::address_space::is_kernel_phys_addr_valid;
 use crate::mm::guestmem::{gpa_is_shared, gpa_strip_c_bit};
 use crate::mm::memory::is_guest_phys_addr_valid;
@@ -39,6 +40,7 @@ pub enum VmExitReason {
         intr_errcode: u32,
     },
     ExternalInterrupt,
+    TripleFault,
     InitSignal,
     InterruptWindow,
     IoInstruction {
@@ -65,6 +67,7 @@ impl VmExitReason {
                 intr_errcode: l2exit_info.exit_intr_errcode,
             },
             1 => VmExitReason::ExternalInterrupt,
+            2 => VmExitReason::TripleFault,
             3 => VmExitReason::InitSignal,
             7 => VmExitReason::InterruptWindow,
             30 => VmExitReason::IoInstruction {
@@ -124,6 +127,12 @@ impl VmExit {
         // Nothing needs to be done here as external interrupt
         // will be handled by svsm already when enable IRQ after
         // the vmexit happened.
+    }
+
+    fn handle_triple_fault(&self) {
+        // Handle triple fault vmexit by triggering triple fault
+        // to shutdown svsm.
+        triple_fault();
     }
 
     fn handle_init_signal(&self) {
@@ -282,6 +291,7 @@ impl VmExit {
                 intr_errcode,
             } => self.handle_exception_nmi(intr_info, intr_errcode)?,
             VmExitReason::ExternalInterrupt => self.handle_external_interrupt(),
+            VmExitReason::TripleFault => self.handle_triple_fault(),
             VmExitReason::InitSignal => self.handle_init_signal(),
             VmExitReason::InterruptWindow => self.handle_interrupt_window(),
             VmExitReason::IoInstruction {
