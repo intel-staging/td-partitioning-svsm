@@ -39,6 +39,53 @@ pub const SX_VECTOR: usize = 30;
 
 pub const PF_ERROR_WRITE: usize = 2;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ExceptionClass {
+    Benign,
+    Contributory,
+    PageFaults,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ExceptionType {
+    Fault,
+    Trap,
+    Abort,
+    Interrupt,
+}
+
+pub fn get_exception_class(vector: u8) -> ExceptionClass {
+    match vector as usize {
+        DE_VECTOR | TS_VECTOR | NP_VECTOR | SS_VECTOR | GP_VECTOR => ExceptionClass::Contributory,
+        PF_VECTOR | VE_VECTOR => ExceptionClass::PageFaults,
+        _ => ExceptionClass::Benign,
+    }
+}
+
+pub fn get_exception_type(vector: u8) -> ExceptionType {
+    match vector as usize {
+        n if n > 31 => ExceptionType::Interrupt,
+        NMI_VECTOR => ExceptionType::Interrupt,
+        DB_VECTOR | BP_VECTOR | OF_VECTOR => ExceptionType::Trap,
+        DF_VECTOR | MCE_VECTOR => ExceptionType::Abort,
+        _ => ExceptionType::Fault,
+    }
+}
+
+pub fn exception_has_err_code(vector: u8) -> bool {
+    matches!(
+        vector as usize,
+        DF_VECTOR
+            | TS_VECTOR
+            | NP_VECTOR
+            | SS_VECTOR
+            | GP_VECTOR
+            | PF_VECTOR
+            | AC_VECTOR
+            | VC_VECTOR
+    )
+}
+
 #[repr(C, packed)]
 #[derive(Default, Debug, Clone, Copy)]
 pub struct X86ExceptionContext {
