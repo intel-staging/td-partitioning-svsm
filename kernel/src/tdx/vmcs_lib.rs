@@ -717,6 +717,7 @@ pub const VMX_INT_INFO_VALID: u32 = 1 << 31;
 pub const VMX_INT_TYPE_NMI: u32 = 2 << 8;
 pub const VMX_INT_TYPE_HW_EXCP: u32 = 3 << 8;
 pub const VMX_INT_TYPE_SW_EXCP: u32 = 6 << 8;
+pub const VMX_INT_TYPE_MASK: u32 = 7 << 8;
 pub const VMX_INT_INFO_ERR_CODE_VALID: u32 = 1 << 11;
 
 // VMX Interruptability info

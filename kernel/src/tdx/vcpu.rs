@@ -158,7 +158,22 @@ impl Vcpu {
                     // With pending interrupt in svsm, vmenter actually didn't
                     // happen so there is no valid vmexit reason to handle.
                     if let Some(l2exit_info) = l2exit_info {
-                        //TODO: handle undelivered event first.
+                        // Check undelivered event first before handle the real vmexit reasons
+                        match self.virq.check_undelivered_event(
+                            l2exit_info.idt_vec_info,
+                            l2exit_info.idt_vec_errcode,
+                        ) {
+                            Err(e) => {
+                                log::error!(
+                                    "vcpu{} failed to check undelivered event: {:?}",
+                                    self.apic_id,
+                                    e
+                                );
+                            }
+                            Ok(Some(req)) => self.cb.make_request(req),
+                            Ok(None) => {}
+                        }
+
                         let vmexit = VmExit::new(l2exit_info);
                         if let Err(e) = vmexit.handle_vmexits() {
                             log::error!(

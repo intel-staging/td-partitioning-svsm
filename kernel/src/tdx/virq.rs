@@ -12,8 +12,8 @@ use super::vlapic::Vlapic;
 use super::vmcs_lib::{
     VmcsField32Control, VmcsField32Guest, VMX_INTERRUPTABILITY_VCPU_BLOCKED_BY_MOVSS,
     VMX_INTERRUPTABILITY_VCPU_BLOCKED_BY_NMI, VMX_INTERRUPTABILITY_VCPU_BLOCKED_BY_STI,
-    VMX_INT_INFO_ERR_CODE_VALID, VMX_INT_INFO_VALID, VMX_INT_TYPE_HW_EXCP, VMX_INT_TYPE_NMI,
-    VMX_INT_TYPE_SW_EXCP,
+    VMX_INT_INFO_ERR_CODE_VALID, VMX_INT_INFO_VALID, VMX_INT_TYPE_HW_EXCP, VMX_INT_TYPE_MASK,
+    VMX_INT_TYPE_NMI, VMX_INT_TYPE_SW_EXCP,
 };
 use crate::cpu::idt::common::{
     exception_has_err_code, get_exception_class, get_exception_type, ExceptionClass, ExceptionType,
@@ -183,5 +183,36 @@ impl Virq {
         }
 
         self.injected
+    }
+
+    // this method should be called just after vmexit, which obtain
+    // idt_vectoring_info to check and re-inject undelivered event.
+    pub fn check_undelivered_event(
+        &mut self,
+        idt_vec_info: u32,
+        idt_vec_errcode: u32,
+    ) -> Result<Option<VcpuReqFlags>, TdxError> {
+        if (idt_vec_info & VMX_INT_INFO_VALID) != 0 {
+            let vector = idt_vec_info as u8;
+            let event_type = idt_vec_info & VMX_INT_TYPE_MASK;
+
+            if event_type == VMX_INT_TYPE_HW_EXCP {
+                self.queue_exception(
+                    vector,
+                    if (idt_vec_info & VMX_INT_INFO_ERR_CODE_VALID) != 0 {
+                        idt_vec_errcode
+                    } else {
+                        0
+                    },
+                )
+                .map(Some)
+            } else if event_type == VMX_INT_TYPE_NMI {
+                Ok(Some(VcpuReqFlags::INJ_NMI))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
