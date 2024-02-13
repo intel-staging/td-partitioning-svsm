@@ -364,7 +364,7 @@ impl Vcpu {
         }
     }
 
-    fn queue_exception(&mut self, vec: u8, err_code: u32) -> Result<(), TdxError> {
+    pub fn queue_exception(&mut self, vec: u8, err_code: u32) -> Result<(), TdxError> {
         self.virq
             .queue_exception(vec, err_code)
             .map(|req| self.cb.make_request(req))
