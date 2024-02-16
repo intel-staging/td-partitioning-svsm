@@ -16,7 +16,7 @@ use crate::address::{PhysAddr, VirtAddr};
 use crate::cpu::idt::common::FIRST_DYNAMIC_VECTOR;
 use crate::cpu::msr::{rdtsc, MSR_IA32_TSC_DEADLINE};
 use crate::mm::alloc::allocate_zeroed_page;
-use crate::mm::virt_to_phys;
+use crate::mm::{virt_to_phys, PAGE_SIZE};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 // APIC Registers
@@ -1148,6 +1148,11 @@ impl Vlapic {
                 false
             }
         }
+    }
+
+    pub fn mmio_range(&self) -> (u64, u64) {
+        let base = self.get_apicbase() & !((PAGE_SIZE - 1) as u64);
+        (base, base + (PAGE_SIZE as u64))
     }
 }
 

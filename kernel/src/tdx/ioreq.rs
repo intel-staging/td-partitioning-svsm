@@ -6,6 +6,11 @@
 
 use super::error::TdxError;
 use super::gmem::{copy_from_gpa, copy_to_gpa};
+use super::instr_emul::InstrEmul;
+use super::percpu::{this_vcpu, this_vcpu_mut};
+use super::tdcall::{tdvmcall_mmio_read, tdvmcall_mmio_write};
+use super::tdp::this_tdp;
+use super::utils::TdpVmId;
 use crate::address::GuestPhysAddr;
 use crate::mm::address_space::is_kernel_phys_addr_valid;
 use crate::mm::guestmem::gpa_is_shared;
@@ -114,10 +119,21 @@ trait IoEmul {
     }
 }
 
-struct IoInstrEmul;
+struct IoInstrEmul<'a>(InstrEmul<'a>);
 
-impl IoEmul for IoInstrEmul {
-    //TODO: implement instruction emulation support
+impl IoEmul for IoInstrEmul<'_> {
+    fn emulate_read(&mut self, io_op: &mut IoOperation) -> Result<(), TdxError> {
+        self.0.emulate_instr(io_op)
+    }
+
+    fn emulate_write(&mut self, io_op: &mut IoOperation) -> Result<(), TdxError> {
+        self.0.emulate_instr(io_op)
+    }
+
+    // Get the IO operation size
+    fn get_opsize(&self) -> AddrSize {
+        self.0.get_opsize()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -128,21 +144,22 @@ pub enum IoType {
     },
 }
 
-#[allow(dead_code)]
 pub struct IoReq {
+    vm_id: TdpVmId,
     io_type: IoType,
     io_op: IoOperation,
 }
 
 impl IoReq {
-    pub fn new(io_type: IoType, io_dir: IoDirection) -> IoReq {
+    pub fn new(vm_id: TdpVmId, io_type: IoType, io_dir: IoDirection) -> IoReq {
         IoReq {
+            vm_id,
             io_type,
             io_op: IoOperation::new(io_dir),
         }
     }
 
-    fn emulate_mmio(&mut self, gpa: GuestPhysAddr, _emul: impl IoEmul) -> Result<(), TdxError> {
+    fn emulate_mmio(&mut self, gpa: GuestPhysAddr, mut emul: impl IoEmul) -> Result<(), TdxError> {
         // Check if the requested GPA is private address. Not allow TDP guest accessing its private
         // memory or SVSM's memory through an MMIO request.
         if !gpa_is_shared(gpa)
@@ -151,13 +168,87 @@ impl IoReq {
             return Err(TdxError::IoEmul(self.io_type));
         }
 
-        //TODO: emulate MMIO
-        Err(TdxError::IoEmulNotSupport)
+        let size = emul.get_opsize();
+        let addr = u64::from(gpa);
+        let io_op = &mut self.io_op;
+        let (vlapic_mmio_start, vlapic_mmio_end) = this_vcpu(self.vm_id).get_vlapic().mmio_range();
+        let (vioapic_mmio_start, vioapic_mmio_end) =
+            this_tdp(self.vm_id).get_vioapic().get_mmio_range();
+        if io_op.is_read() {
+            io_op.data = match addr {
+                // MMIO belongs to virtual lapic is emulated by SVSM.
+                v if (v >= vlapic_mmio_start && (v + size as u64) < vlapic_mmio_end) => {
+                    this_vcpu(self.vm_id)
+                        .get_vlapic()
+                        .read_reg((addr - vlapic_mmio_start) as u32)? as u64
+                }
+                //MMIO belonging to virtual IOAPIC
+                v if v >= vioapic_mmio_start && (v + size as u64) < vioapic_mmio_end => {
+                    this_tdp(self.vm_id)
+                        .get_vioapic()
+                        .mmio_read(v, size as u32)? as u64
+                }
+                // Other MMIO are emulated by host, so send MMIO tdvmcall
+                // to host to emulate.
+                _ => match size {
+                    AddrSize::OneByte => tdvmcall_mmio_read::<u8>(addr as usize) as u64,
+                    AddrSize::TwoBytes => tdvmcall_mmio_read::<u16>(addr as usize) as u64,
+                    AddrSize::FourBytes => tdvmcall_mmio_read::<u32>(addr as usize) as u64,
+                    AddrSize::EightBytes => tdvmcall_mmio_read::<u64>(addr as usize),
+                    _ => return Err(TdxError::IoEmul(self.io_type)),
+                },
+            };
+            emul.emulate_read(io_op)?;
+        } else {
+            emul.emulate_write(io_op)?;
+            match addr {
+                // MMIO belongs to virtual lapic is emulated by SVSM.
+                v if (v >= vlapic_mmio_start && (v + size as u64) < vlapic_mmio_end) => {
+                    this_vcpu_mut(self.vm_id)
+                        .get_vlapic_mut()
+                        .write_reg((addr - vlapic_mmio_start) as u32, io_op.data)?
+                }
+                //MMIO belonging to virtual IOAPIC
+                v if v >= vioapic_mmio_start && (v + size as u64) < vioapic_mmio_end => this_tdp(
+                    self.vm_id,
+                )
+                .get_vioapic()
+                .mmio_write(v, io_op.data as u32, size as u32)?,
+                // Other MMIO are emulated by host, so send MMIO tdvmcall
+                // to host to emulate.
+                _ => match size {
+                    AddrSize::OneByte => {
+                        tdvmcall_mmio_write::<u8>(addr as *const u8, io_op.data as u8)
+                    }
+                    AddrSize::TwoBytes => {
+                        tdvmcall_mmio_write::<u16>(addr as *const u16, io_op.data as u16)
+                    }
+                    AddrSize::FourBytes => {
+                        tdvmcall_mmio_write::<u32>(addr as *const u32, io_op.data as u32)
+                    }
+                    AddrSize::EightBytes => {
+                        tdvmcall_mmio_write::<u64>(addr as *const u64, io_op.data)
+                    }
+                    _ => return Err(TdxError::IoEmul(self.io_type)),
+                },
+            }
+        }
+        Ok(())
     }
 
     pub fn emulate(&mut self) -> Result<(), TdxError> {
         match self.io_type {
-            IoType::Mmio { addr, instr_len: _ } => self.emulate_mmio(addr, IoInstrEmul),
+            IoType::Mmio { addr, instr_len } => self.emulate_mmio(
+                addr,
+                IoInstrEmul(InstrEmul::decode_instr(
+                    this_vcpu_mut(self.vm_id).get_ctx_mut(),
+                    instr_len,
+                )?),
+            ),
         }
+    }
+
+    pub fn need_retry(&self) -> bool {
+        self.io_op.retry
     }
 }

@@ -394,7 +394,6 @@ pub struct InstrEmul<'a> {
     op: OpDesc,
 }
 
-#[allow(dead_code)]
 impl<'a> InstrEmul<'a> {
     fn new(ctx: &'a mut GuestCpuContext, instr_len: usize) -> Result<Self, TdxError> {
         let vcpu_mode = ctx.get_cpu_mode();

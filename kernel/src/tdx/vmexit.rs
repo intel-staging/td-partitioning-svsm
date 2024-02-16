@@ -218,6 +218,7 @@ impl VmExit {
         };
 
         let mut io_req = IoReq::new(
+            self.vm_id,
             IoType::Mmio {
                 addr: gpa,
                 instr_len: self.exit_instr_len as usize,
@@ -227,7 +228,9 @@ impl VmExit {
 
         io_req.emulate()?;
 
-        self.skip_instruction();
+        if !io_req.need_retry() {
+            self.skip_instruction();
+        }
 
         Ok(())
     }

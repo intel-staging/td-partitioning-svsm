@@ -344,7 +344,6 @@ pub struct Vioapic {
     raw: SpinLock<RawVioapic>,
 }
 
-#[allow(dead_code)]
 impl Vioapic {
     pub fn new(vm_id: TdpVmId) -> Self {
         Vioapic {
