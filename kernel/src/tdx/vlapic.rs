@@ -1187,6 +1187,12 @@ impl Vlapic {
             Err(TdxError::Vlapic)
         }
     }
+
+    pub fn handle_below_threshold_vmexit(&self) {
+        this_vcpu(self.vm_id)
+            .get_cb()
+            .make_request(VcpuReqFlags::REQ_EVENT);
+    }
 }
 
 const DELMODE_FIXED: u32 = 0x0; // Delivery Mode: Fixed

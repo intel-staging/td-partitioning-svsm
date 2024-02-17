@@ -70,6 +70,7 @@ pub enum VmExitReason {
     },
     MsrRead,
     MsrWrite,
+    TprBelowThreshold,
     EptViolation {
         fault_gpa: GuestPhysAddr,
         flags: EPTViolationQualFlags,
@@ -122,6 +123,7 @@ impl VmExitReason {
             },
             31 => VmExitReason::MsrRead,
             32 => VmExitReason::MsrWrite,
+            43 => VmExitReason::TprBelowThreshold,
             48 => VmExitReason::EptViolation {
                 fault_gpa: GuestPhysAddr::from(l2exit_info.fault_gpa),
                 flags: EPTViolationQualFlags::from_bits_truncate(l2exit_info.exit_qual),
@@ -327,6 +329,12 @@ impl VmExit {
         })
     }
 
+    fn handle_below_threshold(&self) {
+        this_vcpu_mut(self.vm_id)
+            .get_vlapic_mut()
+            .handle_below_threshold_vmexit();
+    }
+
     fn handle_page_alias(&self, gpa: GuestPhysAddr, size: PageSize) -> Result<bool, TdxError> {
         let (shared, raw_gpa) = if gpa_is_shared(gpa) {
             (true, gpa_strip_c_bit(gpa))
@@ -429,6 +437,7 @@ impl VmExit {
             } => self.handle_io(size, read, string, port)?,
             VmExitReason::MsrRead => self.handle_rdmsr()?,
             VmExitReason::MsrWrite => self.handle_wrmsr()?,
+            VmExitReason::TprBelowThreshold => self.handle_below_threshold(),
             VmExitReason::EptViolation { fault_gpa, flags } => {
                 self.handle_ept_violation(fault_gpa, flags)?
             }
