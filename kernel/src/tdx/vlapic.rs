@@ -1193,6 +1193,17 @@ impl Vlapic {
             .get_cb()
             .make_request(VcpuReqFlags::REQ_EVENT);
     }
+
+    pub fn handle_eoi_vmexit(&mut self, vec: u8) {
+        let vec_mask = 1u32 << vec;
+        let tmr_idx = (vec as u32) >> 5;
+        if (self.get_reg(APIC_OFFSET_TMR0 + tmr_idx * 16) & vec_mask) != 0 {
+            this_tdp(self.vm_id)
+                .get_vioapic()
+                .broadcast_eoi(vec)
+                .expect("Failed to handle EOI vmexit");
+        }
+    }
 }
 
 const DELMODE_FIXED: u32 = 0x0; // Delivery Mode: Fixed
