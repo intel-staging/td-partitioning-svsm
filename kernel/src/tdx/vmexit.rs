@@ -78,6 +78,7 @@ pub enum VmExitReason {
         fault_gpa: GuestPhysAddr,
         flags: EPTViolationQualFlags,
     },
+    Wbinvd,
     UnSupported(u32),
 }
 
@@ -134,6 +135,7 @@ impl VmExitReason {
                 fault_gpa: GuestPhysAddr::from(l2exit_info.fault_gpa),
                 flags: EPTViolationQualFlags::from_bits_truncate(l2exit_info.exit_qual),
             },
+            54 => VmExitReason::Wbinvd,
             _ => VmExitReason::UnSupported(exit_reason),
         }
     }
@@ -427,6 +429,10 @@ impl VmExit {
         Ok(())
     }
 
+    fn handle_wbinvd(&self) {
+        self.skip_instruction();
+    }
+
     pub fn handle_vmexits(&self) -> Result<(), TdxError> {
         match self.reason {
             VmExitReason::ExceptionNMI {
@@ -454,6 +460,7 @@ impl VmExit {
             VmExitReason::EptViolation { fault_gpa, flags } => {
                 self.handle_ept_violation(fault_gpa, flags)?
             }
+            VmExitReason::Wbinvd => self.handle_wbinvd(),
             VmExitReason::UnSupported(v) => {
                 log::error!("UnSupported VmExit Reason {}", v);
                 return Err(TdxError::InjectExcp(ErrExcp::UD));
