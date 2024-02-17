@@ -311,6 +311,10 @@ impl Vmcs {
             self.proc_vm_exec_ctrls,
         );
     }
+
+    pub fn is_xsave_enabled(&self) -> bool {
+        self.xsave_enabled
+    }
 }
 
 struct VmCtrlCheck32 {

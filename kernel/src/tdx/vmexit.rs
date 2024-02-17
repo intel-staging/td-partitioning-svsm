@@ -15,6 +15,8 @@ use super::utils::{td_add_page_alias, GPAAttr, L2ExitInfo, TdpVmId};
 use super::vcpu_comm::VcpuReqFlags;
 use super::vmcs_lib::{VMX_INT_INFO_ERR_CODE_VALID, VMX_INT_INFO_VALID};
 use crate::address::{Address, GuestPhysAddr};
+use crate::cpu::control_regs::{write_xcr, CR4Flags, XCR0Flags, XCR0_RSVD};
+use crate::cpu::features::cpu_has_xcr0_features;
 use crate::cpu::idt::common::triple_fault;
 use crate::cpu::interrupts::{disable_irq, enable_irq};
 use crate::mm::address_space::is_kernel_phys_addr_valid;
@@ -79,6 +81,9 @@ pub enum VmExitReason {
         flags: EPTViolationQualFlags,
     },
     Wbinvd,
+    Xsetbv {
+        cpl: u8,
+    },
     UnSupported(u32),
 }
 
@@ -136,6 +141,9 @@ impl VmExitReason {
                 flags: EPTViolationQualFlags::from_bits_truncate(l2exit_info.exit_qual),
             },
             54 => VmExitReason::Wbinvd,
+            55 => VmExitReason::Xsetbv {
+                cpl: l2exit_info.cpl,
+            },
             _ => VmExitReason::UnSupported(exit_reason),
         }
     }
@@ -433,6 +441,38 @@ impl VmExit {
         self.skip_instruction();
     }
 
+    fn handle_xsetbv(&self, cpl: u8) -> Result<(), TdxError> {
+        let ctx = this_vcpu(self.vm_id).get_ctx();
+        let data64 = (ctx.get_gpreg(GuestCpuGPRegCode::Rdx) << 32)
+            | (ctx.get_gpreg(GuestCpuGPRegCode::Rax) as u32 as u64);
+        let cr4 = CR4Flags::from_bits_truncate(ctx.get_cr4());
+
+        if !this_vcpu(self.vm_id).get_vmcs().is_xsave_enabled()
+            || !cr4.contains(CR4Flags::OSXSAVE)
+            || !cpu_has_xcr0_features(data64)
+        {
+            return Err(TdxError::InjectExcp(ErrExcp::UD));
+        }
+
+        // to access XCR0,'rcx' reg should be 0
+        if cpl == 0
+            && ctx.get_gpreg(GuestCpuGPRegCode::Rcx) == 0
+            && ((data64 & XCR0Flags::X87.bits()) != 0)
+            && ((data64 & XCR0_RSVD) == 0)
+        {
+            // XCR0[2:1] (SSE state & AVX state) can't not be
+            // set to 10b as it is necessary to set both bits
+            // to use AVX instructions.
+            if data64 & (XCR0Flags::SSE | XCR0Flags::AVX).bits() != XCR0Flags::AVX.bits() {
+                write_xcr(data64);
+                self.skip_instruction();
+                return Ok(());
+            }
+        }
+
+        Err(TdxError::InjectExcp(ErrExcp::GP(0)))
+    }
+
     pub fn handle_vmexits(&self) -> Result<(), TdxError> {
         match self.reason {
             VmExitReason::ExceptionNMI {
@@ -461,6 +501,7 @@ impl VmExit {
                 self.handle_ept_violation(fault_gpa, flags)?
             }
             VmExitReason::Wbinvd => self.handle_wbinvd(),
+            VmExitReason::Xsetbv { cpl } => self.handle_xsetbv(cpl)?,
             VmExitReason::UnSupported(v) => {
                 log::error!("UnSupported VmExit Reason {}", v);
                 return Err(TdxError::InjectExcp(ErrExcp::UD));

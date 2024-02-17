@@ -22,6 +22,7 @@ const FEATURE_WORDS: usize = 4;
 
 struct X86Features {
     word: [u32; FEATURE_WORDS],
+    xcr0: u64,
 }
 
 impl X86Features {
@@ -39,7 +40,10 @@ impl X86Features {
         let cpuid07_0 = cpuid(0x00000007).unwrap();
         word[3] = cpuid07_0.ebx;
 
-        X86Features { word }
+        let cpuid0d_0 = cpuid(0x0000000d).unwrap();
+        let xcr0 = cpuid0d_0.eax as u64 | ((cpuid0d_0.edx as u64) << 32);
+
+        X86Features { word, xcr0 }
     }
 }
 
@@ -49,6 +53,10 @@ lazy_static! {
 
 pub fn cpu_has_feature(feat: u32) -> bool {
     X86_FEATURES.word[(feat / 32) as usize] & (feat % 32) != 0
+}
+
+pub fn cpu_has_xcr0_features(feats: u64) -> bool {
+    (X86_FEATURES.xcr0 & feats) == feats
 }
 
 fn is_td_cpu() -> bool {

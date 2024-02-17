@@ -158,3 +158,34 @@ pub fn write_cr4(cr4: CR4Flags) {
              options(att_syntax));
     }
 }
+
+bitflags! {
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    pub struct XCR0Flags: u64 {
+        const X87        = 1 << 0;  // X87 FPU/MMX state (must be 1)
+        const SSE        = 1 << 1;  // SSE state
+        const AVX        = 1 << 2;  // AVX state
+        const BNDREG     = 1 << 3;  // MPX state to manage BND0–BND3 regs
+        const BNDCSR     = 1 << 4;  // MPX state to mange BNDCFGU and BNDSTATUS regs
+        const OPMASK     = 1 << 5;  // AVX-512 state to manage opmask registers k0-k7
+        const ZMM_HI256  = 1 << 6;  // AVX-512 state to manage upper halves of lower ZMM registers
+        const HI16_ZMM   = 1 << 7;  // AVX-512 state to manage upper ZMM registers
+        const PKRU       = 1 << 9;  // PKRU state
+        const TILECFG    = 1 << 17; // AMX state to manage TILECFG
+        const TILEDATA   = 1 << 18; // AMX state to manage TILEDATA
+    }
+}
+
+//compliment of above XCR0Flags
+pub const XCR0_RSVD: u64 = 0xFFFFFFFFFFF9FD00;
+
+pub fn write_xcr(val: u64) {
+    unsafe {
+        asm!(
+            "xsetbv",
+            in("ecx") 0, // Currently only XCR0 is supported so set ECX = 0
+            in("edx") (val >> 32) as u32,
+            in("eax") val as u32,
+        );
+    }
+}
