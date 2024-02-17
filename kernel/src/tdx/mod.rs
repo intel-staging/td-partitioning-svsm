@@ -11,6 +11,7 @@ mod gmem;
 mod interrupts;
 mod ioreq;
 mod msr_bitmap;
+mod opcode;
 mod percpu;
 mod sirte;
 mod tdcall;
