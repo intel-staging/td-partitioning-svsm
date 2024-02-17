@@ -48,6 +48,9 @@ pub enum VmExitReason {
     InterruptWindow,
     Cpuid,
     Hlt,
+    Vmcall {
+        cpl: u8,
+    },
     IoInstruction {
         size: usize,
         read: bool,
@@ -77,6 +80,9 @@ impl VmExitReason {
             7 => VmExitReason::InterruptWindow,
             10 => VmExitReason::Cpuid,
             12 => VmExitReason::Hlt,
+            18 => VmExitReason::Vmcall {
+                cpl: l2exit_info.cpl,
+            },
             30 => VmExitReason::IoInstruction {
                 size: ((l2exit_info.exit_qual & 0x7) + 1) as usize,
                 read: (l2exit_info.exit_qual & 0x8) != 0,
@@ -181,6 +187,17 @@ impl VmExit {
         }
         enable_irq();
         self.skip_instruction();
+    }
+
+    fn handle_vmcall(&self, cpl: u8) -> Result<(), TdxError> {
+        // Doesn't emulate any vmcall but inject #GP or #UD
+        if cpl != 0 {
+            // Inject GP if vmcall is sending from non-ring0
+            Err(TdxError::InjectExcp(ErrExcp::GP(0)))
+        } else {
+            // Inject UD for other cases
+            Err(TdxError::InjectExcp(ErrExcp::UD))
+        }
     }
 
     fn handle_io(&self, size: usize, read: bool, string: bool, port: u16) -> Result<(), TdxError> {
@@ -327,6 +344,7 @@ impl VmExit {
             VmExitReason::InterruptWindow => self.handle_interrupt_window(),
             VmExitReason::Cpuid => self.handle_cpuid(),
             VmExitReason::Hlt => self.handle_hlt(),
+            VmExitReason::Vmcall { cpl } => self.handle_vmcall(cpl)?,
             VmExitReason::IoInstruction {
                 size,
                 read,
