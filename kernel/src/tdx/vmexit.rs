@@ -481,6 +481,26 @@ impl VmExit {
                     }
                 }
             }
+            TdVmCallLeaf::Mmio => {
+                let size = ctx.get_gpreg(GuestCpuGPRegCode::R12) as usize;
+                let addr = GuestPhysAddr::from(ctx.get_gpreg(GuestCpuGPRegCode::R14));
+                let io_dir = if ctx.get_gpreg(GuestCpuGPRegCode::R13) == 0 {
+                    IoDirection::Read
+                } else {
+                    IoDirection::Write
+                };
+
+                let mut io_req =
+                    IoReq::new(self.vm_id, IoType::TdvmcallMmio { addr, size }, io_dir);
+
+                match io_req.emulate() {
+                    Ok(_) => ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_SUCCESS),
+                    Err(e) => {
+                        log::error!("Failed to handle TDVMCALL MMIO: {:x?}", e);
+                        ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_INVALID_OPERAND);
+                    }
+                }
+            }
             TdVmCallLeaf::UnSupported => {
                 log::error!("Unsupported tdvmcall leaf 0x{:x}", leaf);
                 ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_INVALID_OPERAND);
