@@ -365,6 +365,7 @@ pub fn td_add_page_alias(
 
 #[derive(Clone, Copy, Debug)]
 pub enum TdCallLeaf {
+    TdgVpVmcall,
     TdgVpInfo,
     UnSupported,
 }
@@ -372,8 +373,28 @@ pub enum TdCallLeaf {
 impl From<u64> for TdCallLeaf {
     fn from(val: u64) -> Self {
         match val {
+            0 => TdCallLeaf::TdgVpVmcall,
             1 => TdCallLeaf::TdgVpInfo,
             _ => TdCallLeaf::UnSupported,
+        }
+    }
+}
+
+pub const TDG_VP_VMCALL_SUCCESS: u64 = 0x0000000000000000;
+pub const TDG_VP_VMCALL_RETRY: u64 = 0x0000000000000001;
+pub const TDG_VP_VMCALL_INVALID_OPERAND: u64 = 0x8000000000000000;
+
+#[derive(Clone, Copy, Debug)]
+pub enum TdVmCallLeaf {
+    MapGpa,
+    UnSupported,
+}
+
+impl From<u64> for TdVmCallLeaf {
+    fn from(val: u64) -> Self {
+        match val {
+            0x10001 => TdVmCallLeaf::MapGpa,
+            _ => TdVmCallLeaf::UnSupported,
         }
     }
 }

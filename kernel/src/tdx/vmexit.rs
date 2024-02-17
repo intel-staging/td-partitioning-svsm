@@ -6,13 +6,15 @@
 
 use super::error::{ErrExcp, TdxError};
 use super::gctx::{GuestCpuContext, GuestCpuGPRegCode};
-use super::gmem::accept_guest_mem;
+use super::gmem::{accept_guest_mem, convert_guest_mem};
 use super::ioreq::{IoDirection, IoReq, IoType};
 use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::tdcall::{tdcall_get_td_info, tdvmcall_sti_halt};
 use super::tdp::this_tdp;
 use super::utils::{
-    td_add_page_alias, GPAAttr, L2ExitInfo, TdCallLeaf, TdpVmId, TDX_OPERAND_INVALID, TDX_SUCCESS,
+    td_add_page_alias, GPAAttr, L2ExitInfo, TdCallLeaf, TdVmCallLeaf, TdpVmId,
+    TDG_VP_VMCALL_INVALID_OPERAND, TDG_VP_VMCALL_RETRY, TDG_VP_VMCALL_SUCCESS, TDX_OPERAND_INVALID,
+    TDX_SUCCESS,
 };
 use super::vcpu_comm::VcpuReqFlags;
 use super::vmcs_lib::{VMX_INT_INFO_ERR_CODE_VALID, VMX_INT_INFO_VALID};
@@ -445,6 +447,49 @@ impl VmExit {
         self.skip_instruction();
     }
 
+    fn handle_tdg_vp_vmcall(&self, ctx: &mut GuestCpuContext) {
+        let exit_type = ctx.get_gpreg(GuestCpuGPRegCode::R10);
+        let leaf = ctx.get_gpreg(GuestCpuGPRegCode::R11);
+
+        if exit_type != 0 {
+            log::error!("Not support handling tdg_vm_vmcall exit_type {}", exit_type);
+            ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_INVALID_OPERAND);
+            self.skip_instruction();
+            return;
+        }
+
+        match TdVmCallLeaf::from(leaf) {
+            TdVmCallLeaf::MapGpa => {
+                let gpa = GuestPhysAddr::from(ctx.get_gpreg(GuestCpuGPRegCode::R12));
+                let shared = gpa_is_shared(gpa);
+                let start = gpa_strip_c_bit(gpa);
+                let size = ctx.get_gpreg(GuestCpuGPRegCode::R13) as usize;
+                let end = start + size;
+
+                match convert_guest_mem(start, end, shared) {
+                    Ok(size) => {
+                        if size == (end - start) {
+                            ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_SUCCESS);
+                        } else {
+                            ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_RETRY);
+                            ctx.set_gpreg(GuestCpuGPRegCode::R11, u64::from(start + size));
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to handle MapGpa {:?}", e);
+                        ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_INVALID_OPERAND);
+                    }
+                }
+            }
+            TdVmCallLeaf::UnSupported => {
+                log::error!("Unsupported tdvmcall leaf 0x{:x}", leaf);
+                ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_INVALID_OPERAND);
+            }
+        }
+
+        self.skip_instruction();
+    }
+
     fn handle_tdg_vp_info(&self, ctx: &mut GuestCpuContext) -> u64 {
         match tdcall_get_td_info() {
             Ok(td_info) => {
@@ -473,6 +518,7 @@ impl VmExit {
 
         let tdcall = TdCallLeaf::from(leaf);
         let ret = match tdcall {
+            TdCallLeaf::TdgVpVmcall => return self.handle_tdg_vp_vmcall(ctx),
             TdCallLeaf::TdgVpInfo => self.handle_tdg_vp_info(ctx),
             TdCallLeaf::UnSupported => {
                 log::error!("Unsupported tdcall leaf {}", leaf);

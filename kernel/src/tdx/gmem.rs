@@ -271,7 +271,6 @@ fn modify_shared_bitmap(
     })
 }
 
-#[allow(dead_code)]
 pub fn convert_guest_mem(
     gpa_start: GuestPhysAddr,
     gpa_end: GuestPhysAddr,
