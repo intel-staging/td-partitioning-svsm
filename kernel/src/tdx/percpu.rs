@@ -8,7 +8,7 @@
 
 use super::interrupts::{register_interrupt_handlers, TIMER_VECTOR};
 use super::sirte::Sirte;
-use super::tdp::init_tdps;
+use super::tdp::{get_tdp_vm_id, init_tdps};
 use super::utils::{tdvps_l2_ctls, L2CtlsFlags, TdpVmId, MAX_NUM_L2_VMS};
 use super::vcpu::Vcpu;
 use crate::address::{Address, VirtAddr};
@@ -95,7 +95,6 @@ impl TdPerCpu {
         }
     }
 
-    #[allow(dead_code)]
     fn run_tdpvp(&self, vm_id: TdpVmId) {
         let vaddr = self.tdpvps[vm_id.index()].get_or_init(|| {
             let order = get_order(core::mem::size_of::<TdpVp>());
@@ -147,4 +146,11 @@ pub fn this_sirte_mut(vm_id: TdpVmId) -> &'static mut Sirte {
     }
 
     panic!("TDX: NO sirte found for VM{:?}", vm_id)
+}
+
+pub fn run_tdpvp() {
+    // Only to run the first TDP guest
+    let arch = this_cpu().arch.clone();
+    let td_percpu = arch.as_any().downcast_ref::<TdPerCpu>().unwrap();
+    td_percpu.run_tdpvp(get_tdp_vm_id(0).unwrap());
 }

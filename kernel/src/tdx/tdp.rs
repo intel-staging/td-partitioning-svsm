@@ -168,3 +168,11 @@ pub fn get_tdp_by_notify_vec(vec: u8) -> Option<&'static Tdp> {
     }
     None
 }
+
+pub fn get_tdp_vm_id(idx: usize) -> Option<TdpVmId> {
+    if (0..*NUM_L2_VMS as usize).contains(&idx) {
+        TDPS[idx].get().map(|tdp| tdp.vm_id)
+    } else {
+        None
+    }
+}
