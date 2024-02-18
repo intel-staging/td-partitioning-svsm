@@ -41,6 +41,20 @@ pub const SEV_STATUS: u32 = 0xC001_0131;
 pub const SEV_GHCB: u32 = 0xC001_0130;
 pub const MSR_GS_BASE: u32 = 0xC000_0101;
 
+const PAT_MEM_TYPE_UNCACHEABLE: u64 = 0x0;
+const PAT_MEM_TYPE_WRITE_THROUGH: u64 = 0x4;
+const PAT_MEM_TYPE_WRITE_BACK: u64 = 0x6;
+const PAT_MEM_TYPE_UNCACHED: u64 = 0x7;
+
+pub const PAT_POWER_ON_VALUE: u64 = PAT_MEM_TYPE_WRITE_BACK
+    + (PAT_MEM_TYPE_WRITE_THROUGH << 8)
+    + (PAT_MEM_TYPE_UNCACHED << 16)
+    + (PAT_MEM_TYPE_UNCACHEABLE << 24)
+    + (PAT_MEM_TYPE_WRITE_BACK << 32)
+    + (PAT_MEM_TYPE_WRITE_THROUGH << 40)
+    + (PAT_MEM_TYPE_UNCACHED << 48)
+    + (PAT_MEM_TYPE_UNCACHEABLE << 56);
+
 pub fn read_msr(msr: u32) -> Result<u64, SvsmError> {
     let eax: u32;
     let edx: u32;

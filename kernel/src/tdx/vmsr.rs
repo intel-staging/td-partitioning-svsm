@@ -8,8 +8,11 @@ extern crate alloc;
 
 use super::error::TdxError;
 use super::msr_bitmap::{InterceptMsrType, MsrBitmap, MsrBitmapRef};
+use super::percpu::this_vcpu;
 use super::tdcall::{tdvmcall_rdmsr, tdvmcall_wrmsr, TdVmcallError};
 use super::utils::TdpVmId;
+use super::vmcs_lib::VmcsField64Guest;
+use crate::cpu::control_regs::CR0Flags;
 use crate::cpu::msr::*;
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
@@ -89,6 +92,45 @@ impl MsrEmulation for PassthruMsr {
     }
 }
 
+#[derive(Debug)]
+struct PatVmsr(u64);
+
+impl BoxedMsrEmulation for PatVmsr {
+    fn new(_msr: u32) -> Self {
+        PatVmsr(PAT_POWER_ON_VALUE)
+    }
+}
+
+impl MsrEmulation for PatVmsr {
+    fn address(&self) -> u32 {
+        MSR_IA32_PAT
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        Ok(self.0)
+    }
+
+    fn write(&mut self, vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        for (i, pat) in data.to_le_bytes().into_iter().enumerate() {
+            // Check for invalid values
+            if pat & 0xf8 != 0 || (pat & 0x6) == 0x2 {
+                log::info!("PAT: invalid PA{} value 0x{:x}", i, pat);
+                return Err(TdxError::Vmsr);
+            }
+        }
+        // If context->cr0.CD is set, we defer any further requests to
+        // write the guest's IA32_PAT until the time when the guest's
+        // CR0.CD is being cleared
+        if this_vcpu(vm_id).get_ctx().get_cr0() & CR0Flags::CD.bits() == 0 {
+            this_vcpu(vm_id)
+                .get_vmcs()
+                .write64(VmcsField64Guest::IA32_PAT, data);
+        }
+        self.0 = data;
+        Ok(())
+    }
+}
+
 const PASSTHROUGH_MSRS: &[u32] = &[
     MSR_IA32_SPEC_CTRL,
     MSR_IA32_PRED_CMD,
@@ -110,6 +152,9 @@ const PASSTHROUGH_MSRS: &[u32] = &[
     MSR_IA32_TSC_AUX,
 ];
 
+type EmulatedMsrs = (u32, fn(u32) -> Box<dyn MsrEmulation>);
+const EMULATED_MSRS: &[EmulatedMsrs] = &[(MSR_IA32_PAT, PatVmsr::alloc)];
+
 struct GuestCpuMsr(Box<dyn MsrEmulation>);
 
 pub struct GuestCpuMsrs {
@@ -127,6 +172,10 @@ impl GuestCpuMsrs {
     }
 
     pub fn reset(&mut self) {
+        for &(msr, allocfn) in EMULATED_MSRS {
+            self.set(msr, allocfn(msr));
+        }
+
         for &msr in PASSTHROUGH_MSRS.iter() {
             self.set(msr, PassthruMsr::alloc(msr));
         }
@@ -143,6 +192,11 @@ impl GuestCpuMsrs {
                     )
                 });
         }
+
+        // CR0.CD is initially clear
+        bitmap
+            .intercept(MSR_IA32_PAT, InterceptMsrType::Disable)
+            .expect("error configuring MSR interception for PAT MSR");
 
         // Unsupported MSRs are intercepted by default
     }

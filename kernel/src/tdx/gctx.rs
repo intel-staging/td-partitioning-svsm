@@ -406,4 +406,8 @@ impl GuestCpuContext {
     pub fn set_efer(&mut self, val: u64) {
         self.ia32_efer.write_cache(val);
     }
+
+    pub fn get_cr0(&self) -> u64 {
+        self.cr.get_cr0()
+    }
 }
