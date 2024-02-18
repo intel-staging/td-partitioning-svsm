@@ -241,7 +241,9 @@ pub enum VpEnterRet {
 }
 
 const TDVMCALL_STATUS_MASK: u64 = 0xFFFFFFFF00000000;
-const TDX_SUCCESS: u64 = 0x0000000000000000;
+pub const TDX_SUCCESS: u64 = 0x0000000000000000;
+pub const TDX_OPERAND_INVALID: u64 = 0xC000010000000000;
+
 const TDX_L2_EXIT_HOST_ROUTED_ASYNC: u64 = 0x0000110000000000;
 const TDX_L2_EXIT_HOST_ROUTED_TDVMCALL: u64 = 0x0000110100000000;
 const TDX_L2_EXIT_PENDING_INTERRUPT: u64 = 0x0000110200000000;
@@ -359,4 +361,19 @@ pub fn td_add_page_alias(
     }
 
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum TdCallLeaf {
+    TdgVpInfo,
+    UnSupported,
+}
+
+impl From<u64> for TdCallLeaf {
+    fn from(val: u64) -> Self {
+        match val {
+            1 => TdCallLeaf::TdgVpInfo,
+            _ => TdCallLeaf::UnSupported,
+        }
+    }
 }

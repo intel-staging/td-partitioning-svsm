@@ -5,13 +5,15 @@
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
 use super::error::{ErrExcp, TdxError};
-use super::gctx::GuestCpuGPRegCode;
+use super::gctx::{GuestCpuContext, GuestCpuGPRegCode};
 use super::gmem::accept_guest_mem;
 use super::ioreq::{IoDirection, IoReq, IoType};
 use super::percpu::{this_vcpu, this_vcpu_mut};
-use super::tdcall::tdvmcall_sti_halt;
+use super::tdcall::{tdcall_get_td_info, tdvmcall_sti_halt};
 use super::tdp::this_tdp;
-use super::utils::{td_add_page_alias, GPAAttr, L2ExitInfo, TdpVmId};
+use super::utils::{
+    td_add_page_alias, GPAAttr, L2ExitInfo, TdCallLeaf, TdpVmId, TDX_OPERAND_INVALID, TDX_SUCCESS,
+};
 use super::vcpu_comm::VcpuReqFlags;
 use super::vmcs_lib::{VMX_INT_INFO_ERR_CODE_VALID, VMX_INT_INFO_VALID};
 use crate::address::{Address, GuestPhysAddr};
@@ -84,6 +86,7 @@ pub enum VmExitReason {
     Xsetbv {
         cpl: u8,
     },
+    Tdcall,
     UnSupported(u32),
 }
 
@@ -144,6 +147,7 @@ impl VmExitReason {
             55 => VmExitReason::Xsetbv {
                 cpl: l2exit_info.cpl,
             },
+            77 => VmExitReason::Tdcall,
             _ => VmExitReason::UnSupported(exit_reason),
         }
     }
@@ -441,6 +445,46 @@ impl VmExit {
         self.skip_instruction();
     }
 
+    fn handle_tdg_vp_info(&self, ctx: &mut GuestCpuContext) -> u64 {
+        match tdcall_get_td_info() {
+            Ok(td_info) => {
+                ctx.set_gpreg(GuestCpuGPRegCode::Rcx, td_info.gpaw);
+                ctx.set_gpreg(GuestCpuGPRegCode::Rdx, td_info.attributes);
+                ctx.set_gpreg(
+                    GuestCpuGPRegCode::R8,
+                    td_info.num_vcpus as u64 | ((td_info.max_vcpus as u64) << 32),
+                );
+                ctx.set_gpreg(GuestCpuGPRegCode::R9, td_info.vcpu_index as u64);
+                ctx.set_gpreg(GuestCpuGPRegCode::R10, 0);
+                ctx.set_gpreg(GuestCpuGPRegCode::R11, 0);
+
+                TDX_SUCCESS
+            }
+            Err(e) => {
+                log::error!("Failed to handle tdg_vp_info: {:?}", e);
+                TDX_OPERAND_INVALID
+            }
+        }
+    }
+
+    fn handle_tdcall(&self) {
+        let ctx = this_vcpu_mut(self.vm_id).get_ctx_mut();
+        let leaf = ctx.get_gpreg(GuestCpuGPRegCode::Rax);
+
+        let tdcall = TdCallLeaf::from(leaf);
+        let ret = match tdcall {
+            TdCallLeaf::TdgVpInfo => self.handle_tdg_vp_info(ctx),
+            TdCallLeaf::UnSupported => {
+                log::error!("Unsupported tdcall leaf {}", leaf);
+                TDX_OPERAND_INVALID
+            }
+        };
+
+        ctx.set_gpreg(GuestCpuGPRegCode::Rax, ret);
+
+        self.skip_instruction();
+    }
+
     fn handle_xsetbv(&self, cpl: u8) -> Result<(), TdxError> {
         let ctx = this_vcpu(self.vm_id).get_ctx();
         let data64 = (ctx.get_gpreg(GuestCpuGPRegCode::Rdx) << 32)
@@ -502,6 +546,7 @@ impl VmExit {
             }
             VmExitReason::Wbinvd => self.handle_wbinvd(),
             VmExitReason::Xsetbv { cpl } => self.handle_xsetbv(cpl)?,
+            VmExitReason::Tdcall => self.handle_tdcall(),
             VmExitReason::UnSupported(v) => {
                 log::error!("UnSupported VmExit Reason {}", v);
                 return Err(TdxError::InjectExcp(ErrExcp::UD));
