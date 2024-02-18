@@ -4,8 +4,11 @@
 //
 // Author: Jason CJ Chen <jason.cj.chen@intel.com>
 
+mod error;
 mod percpu;
 mod tdcall;
+mod tdp;
+mod utils;
 
 pub use percpu::TdPerCpu;
 pub use tdcall::{
