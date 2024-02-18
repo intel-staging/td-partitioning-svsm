@@ -33,6 +33,10 @@ const TDCALL_TDEXTENDRTMR: u64 = 2;
 const TDCALL_TDGETVEINFO: u64 = 3;
 const TDCALL_TDREPORT: u64 = 4;
 const TDCALL_TDACCEPTPAGE: u64 = 6;
+const TDCALL_VM_RD: u64 = 7;
+const TDCALL_VM_WR: u64 = 8;
+const TDCALL_VP_RD: u64 = 9;
+const TDCALL_VP_WR: u64 = 10;
 
 // GTDG.VP.VMCALL leaf sub-function numbers
 const TDVMCALL_CPUID: u64 = 0x0000a;

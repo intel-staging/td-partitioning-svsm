@@ -571,3 +571,71 @@ pub fn td_shared_mask() -> Option<u64> {
         None
     }
 }
+
+pub fn tdcall_vp_read(field: u64) -> Result<u64, TdCallError> {
+    let mut args = TdcallArgs {
+        rax: TDCALL_VP_RD,
+        rdx: field,
+        ..Default::default()
+    };
+
+    let ret = td_call(&mut args);
+
+    if ret != TDCALL_STATUS_SUCCESS {
+        return Err(ret.into());
+    }
+
+    Ok(args.r8)
+}
+
+pub fn tdcall_vp_write(field: u64, value: u64, mask: u64) -> Result<(), TdCallError> {
+    let mut args = TdcallArgs {
+        rax: TDCALL_VP_WR,
+        rdx: field,
+        r8: value,
+        r9: mask,
+        ..Default::default()
+    };
+
+    let ret = td_call(&mut args);
+
+    if ret != TDCALL_STATUS_SUCCESS {
+        return Err(ret.into());
+    }
+
+    Ok(())
+}
+
+pub fn tdcall_vm_read(field: u64) -> Result<u64, TdCallError> {
+    let mut args = TdcallArgs {
+        rax: TDCALL_VM_RD,
+        rdx: field,
+        ..Default::default()
+    };
+
+    let ret = td_call(&mut args);
+
+    if ret != TDCALL_STATUS_SUCCESS {
+        return Err(ret.into());
+    }
+
+    Ok(args.r8)
+}
+
+pub fn tdcall_vm_write(field: u64, value: u64, mask: u64) -> Result<(), TdCallError> {
+    let mut args = TdcallArgs {
+        rax: TDCALL_VM_WR,
+        rdx: field,
+        r8: value,
+        r9: mask,
+        ..Default::default()
+    };
+
+    let ret = td_call(&mut args);
+
+    if ret != TDCALL_STATUS_SUCCESS {
+        return Err(ret.into());
+    }
+
+    Ok(())
+}
