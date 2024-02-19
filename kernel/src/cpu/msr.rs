@@ -7,6 +7,10 @@
 use crate::error::SvsmError;
 use core::arch::asm;
 
+pub const MSR_VMX_PROCBASED_CTLS2: u32 = 0x0000_048B;
+pub const MSR_VMX_TRUE_PROCBASED_CTLS: u32 = 0x0000_048E;
+pub const MSR_VMX_TRUE_ENTRY_CTLS: u32 = 0x0000_0490;
+
 pub const EFER: u32 = 0xC000_0080;
 pub const SEV_STATUS: u32 = 0xC001_0131;
 pub const SEV_GHCB: u32 = 0xC001_0130;
