@@ -4,6 +4,7 @@
 //
 // Author: Jason CJ Chen <jason.cj.chen@intel.com>
 
+use super::gctx::GuestCpuContext;
 use super::tdcall::tdvmcall_sti_halt;
 use super::utils::TdpVmId;
 use super::vmcs::Vmcs;
@@ -40,6 +41,7 @@ pub struct Vcpu {
     is_bsp: bool,
     cur_state: VcpuState,
     vmcs: Vmcs,
+    ctx: GuestCpuContext,
 }
 
 impl Vcpu {
@@ -49,6 +51,7 @@ impl Vcpu {
         self.is_bsp = is_bsp;
         self.cur_state = VcpuState::Zombie;
         self.vmcs.init(vm_id, apic_id);
+        self.ctx.init(vm_id);
     }
 
     pub fn run(&mut self) {
@@ -135,7 +138,7 @@ impl Vcpu {
     }
 
     fn reset(&mut self) {
-        //TODO: vcpu reset
+        self.ctx.reset();
     }
 
     fn configure_vmcs(&mut self) {
