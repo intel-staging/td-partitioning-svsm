@@ -67,3 +67,60 @@ pub fn tdvps_l2_ctls(vm_id: TdpVmId, l2_ctls: L2CtlsFlags) -> Result<(), TdxErro
     )
     .map_err(|_| TdxError::VpWR(MD_TDVPS_L2_CTLS + vm_id.num(), l2_ctls.bits()))
 }
+
+pub const MD_CONTEXT_VP: u64 = 2;
+const TDG_CLASS_SHIFT: u8 = 56;
+const TDG_CLASS_MASK: u64 = 0x3f;
+const TDG_CONTEXT_SHIFT: u8 = 52;
+const TDG_CONTEXT_MASK: u64 = 0x7;
+const TDG_WRITE_MASK_SHIFT: u8 = 51;
+const TDG_ELEM_SIZE_SHIFT: u8 = 32;
+const TDG_ELEM_SIZE_MASK: u64 = 0x3;
+const TDG_FIELD_MASK: u64 = 0xffff_ffff;
+
+const MD_TDVPS_VMCS_1_CLASS_CODE: u64 = 36;
+pub enum TdVpsPerVmClass {
+    Vmcs,
+}
+
+impl TdVpsPerVmClass {
+    pub fn code(&self, vm_id: TdpVmId) -> u64 {
+        let class_code = match self {
+            TdVpsPerVmClass::Vmcs => MD_TDVPS_VMCS_1_CLASS_CODE,
+        };
+
+        class_code + (vm_id.num() - 1) * 8
+    }
+}
+
+pub fn field_elem_size(bits: u8) -> u64 {
+    match bits {
+        16 => 1u64,
+        32 => 2u64,
+        64 => 3u64,
+        _ => {
+            panic!("invalid bits {}", bits);
+        }
+    }
+}
+
+pub fn build_tdg_field(
+    class: u64,
+    context: u64,
+    write_mask: u64,
+    elem_size: u64,
+    field: u64,
+) -> u64 {
+    assert!(
+        class <= 0x3f
+            && context <= 0x7
+            && write_mask <= 1
+            && elem_size <= 0x3
+            && field <= 0xffff_ffff
+    );
+    ((class & TDG_CLASS_MASK) << TDG_CLASS_SHIFT)
+        | ((context & TDG_CONTEXT_MASK) << TDG_CONTEXT_SHIFT)
+        | (write_mask << TDG_WRITE_MASK_SHIFT)
+        | ((elem_size & TDG_ELEM_SIZE_MASK) << TDG_ELEM_SIZE_SHIFT)
+        | (field & TDG_FIELD_MASK)
+}

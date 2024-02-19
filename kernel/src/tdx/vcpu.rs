@@ -6,6 +6,7 @@
 
 use super::tdcall::tdvmcall_sti_halt;
 use super::utils::TdpVmId;
+use super::vmcs::Vmcs;
 use crate::cpu::interrupts::{disable_irq, enable_irq};
 
 // VcpuState machine:
@@ -38,6 +39,7 @@ pub struct Vcpu {
     apic_id: u32,
     is_bsp: bool,
     cur_state: VcpuState,
+    vmcs: Vmcs,
 }
 
 impl Vcpu {
@@ -46,6 +48,7 @@ impl Vcpu {
         self.apic_id = apic_id;
         self.is_bsp = is_bsp;
         self.cur_state = VcpuState::Zombie;
+        self.vmcs.init(vm_id, apic_id);
     }
 
     pub fn run(&mut self) {

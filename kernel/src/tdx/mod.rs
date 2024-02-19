@@ -11,6 +11,8 @@ mod tdcall;
 mod tdp;
 mod utils;
 mod vcpu;
+mod vmcs;
+mod vmcs_lib;
 
 pub use percpu::TdPerCpu;
 pub use tdcall::{
