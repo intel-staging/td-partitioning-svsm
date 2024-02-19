@@ -12,6 +12,7 @@ mod tdcall;
 mod tdp;
 mod utils;
 mod vcpu;
+mod vcr;
 mod vmcs;
 mod vmcs_lib;
 

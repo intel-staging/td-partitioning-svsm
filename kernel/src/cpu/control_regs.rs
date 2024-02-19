@@ -32,6 +32,7 @@ pub fn cr4_init() {
 }
 
 bitflags! {
+    #[derive(Copy, Clone, Debug, PartialEq)]
     pub struct CR0Flags: u64 {
         const PE = 1 << 0;  // Protection Enabled
         const MP = 1 << 1;  // Monitor Coprocessor
@@ -106,6 +107,7 @@ pub fn write_cr3(cr3: PhysAddr) {
 }
 
 bitflags! {
+    #[derive(Copy, Clone, Debug, PartialEq)]
     pub struct CR4Flags: u64 {
         const VME       = 1 << 0;  // Virtual-8086 Mode Extensions
         const PVI       = 1 << 1;  // Protected-Mode Virtual Interrupts
@@ -119,14 +121,19 @@ bitflags! {
         const OSFXSR        = 1 << 9;  // Operating System FXSAVE/FXRSTOR Support
         const OSXMMEXCPT    = 1 << 10; // Operating System Unmasked Exception Support
         const UMIP      = 1 << 11; // User Mode Instruction Prevention
+        const LA57      = 1 << 12; // 57-bit linear address
+        const VMXE      = 1 << 13; // VMX enable
+        const SMXE      = 1 << 14; // SMX enable
         const FSGSBASE      = 1 << 16; // Enable RDFSBASE, RDGSBASE, WRFSBASE, and
                            // WRGSBASE instructions
         const PCIDE     = 1 << 17; // Process Context Identifier Enable
         const OSXSAVE       = 1 << 18; // XSAVE and Processor Extended States Enable Bit
+        const KL        = 1 << 19; // Key Locker Enable Bit
         const SMEP      = 1 << 20; // Supervisor Mode Execution Prevention
         const SMAP      = 1 << 21; // Supervisor Mode Access Protection
         const PKE       = 1 << 22; // Protection Key Enable
         const CET       = 1 << 23; // Control-flow Enforcement Technology
+        const PKS       = 1 << 24; // Enable protection keys for supervisor-mode pages
     }
 }
 

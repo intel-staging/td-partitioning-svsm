@@ -9,6 +9,7 @@ use super::msr::{read_msr, write_msr, EFER};
 use bitflags::bitflags;
 
 bitflags! {
+    #[derive(Copy, Clone, Debug, PartialEq)]
     pub struct EFERFlags: u64 {
         const SCE   = 1 << 0;  // System Call Extensions
         const LME   = 1 << 8;  // Long Mode Enable

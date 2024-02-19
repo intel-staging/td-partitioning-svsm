@@ -7,6 +7,10 @@
 use crate::error::SvsmError;
 use core::arch::asm;
 
+pub const MSR_IA32_VMX_CR0_FIXED0: u32 = 0x0000_0486;
+pub const MSR_IA32_VMX_CR0_FIXED1: u32 = 0x0000_0487;
+pub const MSR_IA32_VMX_CR4_FIXED0: u32 = 0x0000_0488;
+pub const MSR_IA32_VMX_CR4_FIXED1: u32 = 0x0000_0489;
 pub const MSR_VMX_PROCBASED_CTLS2: u32 = 0x0000_048B;
 pub const MSR_VMX_TRUE_PROCBASED_CTLS: u32 = 0x0000_048E;
 pub const MSR_VMX_TRUE_ENTRY_CTLS: u32 = 0x0000_0490;

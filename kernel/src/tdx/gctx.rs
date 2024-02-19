@@ -6,6 +6,7 @@
 
 use super::percpu::this_vcpu;
 use super::utils::TdpVmId;
+use super::vcr::GuestCpuCrRegs;
 use super::vmcs::Vmcs;
 use super::vmcs_lib::{VmcsField16Guest, VmcsField32Guest, VmcsField64Guest};
 use crate::address::VirtAddr;
@@ -33,7 +34,6 @@ where
     writehw: Option<fn(&Vmcs, T)>,
 }
 
-#[allow(dead_code)]
 impl<T: Copy + Clone + Debug + Default> RegCache<T> {
     pub fn new(
         vm_id: TdpVmId,
@@ -285,6 +285,7 @@ const REAL_MODE_TR_SEG_AR: u32 = 0x008b;
 const REAL_MODE_SEG_LIMIT: u32 = 0xffff;
 const REAL_MODE_DATA_SEG_BASE: u64 = 0;
 const REAL_MODE_CODE_SEG_BASE: u64 = 0xffff_0000;
+const REAL_MODE_CR0: u64 = 0x30; /*CR0.ET + CR0.NE*/
 
 pub struct GuestCpuContext {
     vm_id: TdpVmId,
@@ -292,6 +293,7 @@ pub struct GuestCpuContext {
     tdp_ctx_pa: u64,
     ia32_efer: RegCache<u64>,
     segs: GuestCpuSegs,
+    cr: GuestCpuCrRegs,
 }
 
 impl GuestCpuContext {
@@ -309,6 +311,7 @@ impl GuestCpuContext {
             Some(|vmcs, v| vmcs.write64(VmcsField64Guest::IA32_EFER, v)),
         );
         self.segs.init(vm_id);
+        self.cr.init(vm_id);
     }
 
     pub fn reset(&mut self) {
@@ -376,5 +379,26 @@ impl GuestCpuContext {
             REAL_MODE_SEG_LIMIT,
             REAL_MODE_LDTR_SEG_AR,
         ));
+
+        self.cr
+            .set_cr0(REAL_MODE_CR0)
+            .expect("Failed to reset CR0 to real mode");
+        self.cr
+            .set_cr2(0)
+            .expect("Failed to reset CR2 to real mode");
+        self.cr
+            .set_cr3(0)
+            .expect("Failed to reset CR3 to real mode");
+        self.cr
+            .set_cr4(0)
+            .expect("Failed to reset CR4 to real mode");
+    }
+
+    pub fn get_efer(&self) -> u64 {
+        self.ia32_efer.read_cache()
+    }
+
+    pub fn set_efer(&mut self, val: u64) {
+        self.ia32_efer.write_cache(val);
     }
 }

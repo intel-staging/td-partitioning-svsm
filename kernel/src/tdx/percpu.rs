@@ -117,7 +117,6 @@ pub fn this_vcpu(vm_id: TdpVmId) -> &'static Vcpu {
     panic!("TDX: NO vcpu found for VM{:?}", vm_id)
 }
 
-#[allow(dead_code)]
 pub fn this_vcpu_mut(vm_id: TdpVmId) -> &'static mut Vcpu {
     if let Some(td_percpu) = this_cpu().arch.as_any().downcast_ref::<TdPerCpu>() {
         if let Some(vaddr) = td_percpu.tdpvps[vm_id.index()].get() {

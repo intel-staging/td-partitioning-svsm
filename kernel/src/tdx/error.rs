@@ -4,9 +4,16 @@
 //
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ErrExcp {
+    GP(u32),
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum TdxError {
-    // Invalid Vm Id
+    // Require to inject exception to Guest
+    InjectExcp(ErrExcp),
+    // Invalid vm id
     InvalidVmId(u64),
     // Tdp guest is not supported
     TdpNotSupport,

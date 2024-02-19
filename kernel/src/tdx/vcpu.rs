@@ -58,6 +58,14 @@ impl Vcpu {
         &self.vmcs
     }
 
+    pub fn get_ctx(&self) -> &GuestCpuContext {
+        &self.ctx
+    }
+
+    pub fn get_ctx_mut(&mut self) -> &mut GuestCpuContext {
+        &mut self.ctx
+    }
+
     pub fn run(&mut self) {
         if self.is_bsp {
             self.update_cur_state(VcpuState::PowerOnReset);
