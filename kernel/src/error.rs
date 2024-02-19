@@ -25,6 +25,14 @@ pub enum SvsmError {
     Ghcb(GhcbError),
     // Errors related to MSR protocol
     GhcbMsr(GhcbMsrError),
+    // Guest memory map related failure
+    GuestMemMap,
+    // Guest memory map read related failure
+    GuestMemMapRead,
+    // Guest memory map size too small
+    GuestMemMapSize,
+    // Guest memory map write related failure
+    GuestMemMapWrite,
     // Errors related to SEV-SNP operations, like PVALIDATE or RMPUPDATE
     SevSnp(SevSnpError),
     // Generic errors related to memory management

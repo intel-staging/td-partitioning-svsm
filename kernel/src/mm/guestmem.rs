@@ -4,10 +4,12 @@
 //
 // Author: Joerg Roedel <jroedel@suse.de>
 
-use crate::address::{Address, VirtAddr};
+use crate::address::{Address, GuestPhysAddr, VirtAddr};
 use crate::error::SvsmError;
-
+use crate::mm::memory::is_guest_phys_addr_valid;
+use crate::mm::ptguards::PerCPUPageMappingGuard;
 use core::arch::asm;
+use core::marker::PhantomData;
 use core::mem::{size_of, MaybeUninit};
 
 #[allow(dead_code)]
@@ -217,6 +219,68 @@ impl<T: Copy> GuestPtr<T> {
     #[inline]
     pub fn offset(&self, count: isize) -> Self {
         GuestPtr::from_ptr(self.ptr.wrapping_offset(count))
+    }
+}
+
+#[derive(Debug)]
+pub struct GuestMemMap<T> {
+    guard: PerCPUPageMappingGuard,
+    virt_off: usize,
+    size: usize,
+    _phantom: PhantomData<T>,
+}
+
+impl<T: Sized + Copy> GuestMemMap<T> {
+    pub fn new(gpa: GuestPhysAddr, size: usize) -> Result<Self, SvsmError> {
+        if !is_guest_phys_addr_valid(gpa) {
+            return Err(SvsmError::GuestMemMap);
+        }
+
+        let hpa = gpa.page_align().to_host_phys_addr();
+        let hpa_end = (gpa + size).page_align_up().to_host_phys_addr();
+        let guard = PerCPUPageMappingGuard::create(hpa, hpa_end, 0).map_err(|e| {
+            log::error!("Failed to create GuestMem {:?}", e);
+            SvsmError::GuestMemMap
+        })?;
+
+        Ok(GuestMemMap {
+            guard,
+            virt_off: gpa - gpa.page_align(),
+            size: hpa_end - hpa,
+            _phantom: PhantomData,
+        })
+    }
+
+    pub fn virt_addr(&self) -> VirtAddr {
+        self.guard.virt_addr() + self.virt_off
+    }
+
+    pub fn read(&self) -> Result<T, SvsmError> {
+        let ptr = GuestPtr::<T>::new(self.virt_addr());
+
+        // Read size is larger than mapped size
+        if size_of::<T>() > self.size {
+            Err(SvsmError::GuestMemMapSize)
+        } else {
+            ptr.read().map_err(|e| {
+                log::error!("Failed to read GuestPtr: {:?}", e);
+                SvsmError::GuestMemMapRead
+            })
+        }
+    }
+
+    pub fn write(&self, buf: T) -> Result<(), SvsmError> {
+        let ptr = GuestPtr::<T>::new(self.virt_addr());
+
+        // Write size is larger than mapped size
+        if size_of::<T>() > self.size {
+            Err(SvsmError::GuestMemMapSize)
+        } else {
+            ptr.write(buf).map_err(|e| {
+                log::error!("Failed to write GuestPtr: {:?}", e);
+                SvsmError::GuestMemMapWrite
+            })
+        }
     }
 }
 
