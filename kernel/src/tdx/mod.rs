@@ -8,6 +8,7 @@ pub mod error;
 
 mod gctx;
 mod gmem;
+mod msr_bitmap;
 mod percpu;
 mod tdcall;
 mod tdp;

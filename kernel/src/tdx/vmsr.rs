@@ -7,6 +7,7 @@
 extern crate alloc;
 
 use super::error::TdxError;
+use super::msr_bitmap::{MsrBitmap, MsrBitmapRef};
 use super::utils::TdpVmId;
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
@@ -56,6 +57,7 @@ struct GuestCpuMsr(Box<dyn MsrEmulation>);
 pub struct GuestCpuMsrs {
     vm_id: TdpVmId,
     msrs: BTreeMap<u32, GuestCpuMsr>,
+    bitmap: MsrBitmap,
 }
 
 #[allow(dead_code)]
@@ -63,6 +65,12 @@ impl GuestCpuMsrs {
     pub fn init(&mut self, vm_id: TdpVmId) {
         self.vm_id = vm_id;
         self.msrs = BTreeMap::new();
+        self.bitmap = MsrBitmap::new();
+    }
+
+    #[allow(dead_code)]
+    fn new_bitmap_ref(&mut self) -> MsrBitmapRef<'_> {
+        MsrBitmapRef::new(self.vm_id, &mut self.bitmap)
     }
 
     fn get(&self, index: u32) -> Option<&dyn MsrEmulation> {

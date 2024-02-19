@@ -80,14 +80,17 @@ const TDG_ELEM_SIZE_MASK: u64 = 0x3;
 const TDG_FIELD_MASK: u64 = 0xffff_ffff;
 
 const MD_TDVPS_VMCS_1_CLASS_CODE: u64 = 36;
+const MD_TDVPS_MSR_BITMAPS_1_CLASS_CODE: u64 = 37;
 pub enum TdVpsPerVmClass {
     Vmcs,
+    MsrBitmap,
 }
 
 impl TdVpsPerVmClass {
     pub fn code(&self, vm_id: TdpVmId) -> u64 {
         let class_code = match self {
             TdVpsPerVmClass::Vmcs => MD_TDVPS_VMCS_1_CLASS_CODE,
+            TdVpsPerVmClass::MsrBitmap => MD_TDVPS_MSR_BITMAPS_1_CLASS_CODE,
         };
 
         class_code + (vm_id.num() - 1) * 8
@@ -155,4 +158,19 @@ pub fn td_convert_guest_pages(
     }
 
     Ok(end_hpa - start_hpa)
+}
+
+pub fn td_set_msr_bitmap(vm_id: TdpVmId, index: u32, val: u64, mask: u64) -> Result<(), TdxError> {
+    let field = build_tdg_field(
+        TdVpsPerVmClass::MsrBitmap.code(vm_id),
+        MD_CONTEXT_VP,
+        1,
+        field_elem_size(64),
+        u64::from(index),
+    );
+
+    tdcall_vp_write(field, val, mask).map_err(|e| {
+        log::error!("Set MSR bitmap failed for MSR index 0x{:x}: {:?}", index, e);
+        TdxError::VpWR(field, val)
+    })
 }
