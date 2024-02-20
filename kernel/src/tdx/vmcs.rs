@@ -7,6 +7,7 @@
 //      Jason CJ Chen <jason.cj.chen@intel.com>
 
 use super::utils::TdpVmId;
+use super::vcr::{get_cr0_guest_host_mask, get_cr4_guest_host_mask};
 use super::vmcs_lib::{
     PrimaryVmExecControls, SecondaryVmExecControls, VmEntryControls, VmcsAccess,
     VmcsField32Control, VmcsField64Control,
@@ -183,7 +184,14 @@ impl Vmcs {
         // target-value regs to evaluate
         self.write32(VmcsField32Control::CR3_TARGET_COUNT, 0);
 
-        // TODO: configure CR0/CR4_GUEST_HOST_MASK
+        self.write64(
+            VmcsField64Control::CR0_GUEST_HOST_MASK,
+            get_cr0_guest_host_mask(),
+        );
+        self.write64(
+            VmcsField64Control::CR4_GUEST_HOST_MASK,
+            get_cr4_guest_host_mask(),
+        );
 
         // The CR3 target registers work in concert with VMX_CR3_TARGET_COUNT
         // field. Using these registers guest CR3 access can be managed. i.e.,
