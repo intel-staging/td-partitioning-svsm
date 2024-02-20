@@ -6,8 +6,8 @@
 
 use super::error::TdxError;
 use super::tdcall::{
-    td_accept_memory, tdcall_vm_read, tdcall_vp_invept, tdcall_vp_invvpid, tdcall_vp_write,
-    tdvmcall_mapgpa,
+    td_accept_memory, tdcall_vm_read, tdcall_vp_enter, tdcall_vp_invept, tdcall_vp_invvpid,
+    tdcall_vp_write, tdvmcall_mapgpa, TdcallArgs,
 };
 use crate::address::{Address, GuestPhysAddr};
 use crate::types::PAGE_SIZE;
@@ -193,4 +193,63 @@ fn td_invvpid(vm_id: u64, type_id: u64, gva: u64) {
 
 pub fn td_flush_vpid_global(vm_id: TdpVmId) {
     td_invvpid(vm_id.num(), VMX_VPID_TYPE_ALL_CONTEXT, 0);
+}
+
+#[derive(Copy, Clone, Default)]
+pub struct L2ExitInfo {
+    pub exit_reason: u32,
+    pub exit_qual: u64,
+    pub fault_gla: u64,
+    pub fault_gpa: u64,
+    pub exit_intr_info: u32,
+    pub exit_intr_errcode: u32,
+    pub idt_vec_info: u32,
+    pub idt_vec_errcode: u32,
+    pub exit_instr_info: u32,
+    pub exit_instr_len: u32,
+    pub cpl: u8,
+}
+
+impl L2ExitInfo {
+    fn from_tdcall_args(v: TdcallArgs) -> Self {
+        L2ExitInfo {
+            exit_reason: v.rax as u32,
+            exit_qual: v.rcx,
+            fault_gla: v.rdx,
+            fault_gpa: v.r8,
+            exit_intr_info: v.r9 as u32,
+            exit_intr_errcode: (v.r9 >> 32) as u32,
+            idt_vec_info: v.r10 as u32,
+            idt_vec_errcode: (v.r10 >> 32) as u32,
+            exit_instr_info: v.r11 as u32,
+            exit_instr_len: (v.r11 >> 32) as u32,
+            cpl: (v.r12 & 0x3) as u8,
+        }
+    }
+}
+
+pub enum VpEnterRet {
+    L2Exit(L2ExitInfo),
+    NoL2Enter,
+    Error(u32, u32),
+}
+
+const TDVMCALL_STATUS_MASK: u64 = 0xFFFFFFFF00000000;
+const TDX_SUCCESS: u64 = 0x0000000000000000;
+const TDX_L2_EXIT_HOST_ROUTED_ASYNC: u64 = 0x0000110000000000;
+const TDX_L2_EXIT_HOST_ROUTED_TDVMCALL: u64 = 0x0000110100000000;
+const TDX_L2_EXIT_PENDING_INTERRUPT: u64 = 0x0000110200000000;
+const TDX_PENDING_INTERRUPT: u64 = 0x0000112000000000;
+
+#[allow(dead_code)]
+pub fn td_vp_enter(vm_id: TdpVmId, ctx_pa: u64) -> VpEnterRet {
+    let ret = tdcall_vp_enter(vm_id.num() << 52, ctx_pa);
+    match ret.rax & TDVMCALL_STATUS_MASK {
+        TDX_SUCCESS
+        | TDX_L2_EXIT_HOST_ROUTED_ASYNC
+        | TDX_L2_EXIT_HOST_ROUTED_TDVMCALL
+        | TDX_L2_EXIT_PENDING_INTERRUPT => VpEnterRet::L2Exit(L2ExitInfo::from_tdcall_args(ret)),
+        TDX_PENDING_INTERRUPT => VpEnterRet::NoL2Enter,
+        _ => VpEnterRet::Error(ret.rax as u32, (ret.rax >> 32) as u32),
+    }
 }
