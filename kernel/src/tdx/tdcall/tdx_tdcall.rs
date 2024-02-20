@@ -672,3 +672,16 @@ pub fn tdcall_vp_invept(vm_flags: u64) -> Result<u64, TdCallError> {
 
     Ok(ret)
 }
+
+pub fn tdcall_vp_enter(vm_flags: u64, gpa: u64) -> TdcallArgs {
+    let mut args = TdcallArgs {
+        rax: TDCALL_VP_ENTER,
+        rcx: vm_flags,
+        rdx: gpa,
+        ..Default::default()
+    };
+
+    let _ = td_call(&mut args);
+
+    args
+}

@@ -30,6 +30,7 @@ asm_td_call:
         push rbx
         push rsi
         push rdi
+        push rcx
 
         # Use RDI to save RCX value
         mov rdi, rcx
@@ -52,23 +53,22 @@ asm_td_call:
         # tdcall
         .byte 0x66,0x0f,0x01,0xcc
 
-        # Exit if tdcall reports failure.
-        test rax, rax
-        jnz td_call_exit
+        pop r15
 
         # Copy the output operands from registers to the struct
-        mov [rdi + TDCALL_ARG_RAX], rax
-        mov [rdi + TDCALL_ARG_RCX], rcx
-        mov [rdi + TDCALL_ARG_RDX], rdx
-        mov [rdi + TDCALL_ARG_R8],  r8
-        mov [rdi + TDCALL_ARG_R9],  r9
-        mov [rdi + TDCALL_ARG_R10], r10
-        mov [rdi + TDCALL_ARG_R11], r11
-        mov [rdi + TDCALL_ARG_R12], r12
-        mov [rdi + TDCALL_ARG_R13], r13
+        mov [r15 + TDCALL_ARG_RAX], rax
+        mov [r15 + TDCALL_ARG_RCX], rcx
+        mov [r15 + TDCALL_ARG_RDX], rdx
+        mov [r15 + TDCALL_ARG_R8],  r8
+        mov [r15 + TDCALL_ARG_R9],  r9
+        mov [r15 + TDCALL_ARG_R10], r10
+        mov [r15 + TDCALL_ARG_R11], r11
+        mov [r15 + TDCALL_ARG_R12], r12
+        mov [r15 + TDCALL_ARG_R13], r13
 
 td_call_exit:
         # Pop out saved registers from stack
+        mov rcx, r15
         pop rdi
         pop rsi
         pop rbx
