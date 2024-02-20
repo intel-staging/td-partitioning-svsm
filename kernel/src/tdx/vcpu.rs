@@ -9,6 +9,9 @@ use super::tdcall::tdvmcall_sti_halt;
 use super::utils::TdpVmId;
 use super::vmcs::Vmcs;
 use crate::cpu::interrupts::{disable_irq, enable_irq};
+use crate::cpu::msr::MSR_IA32_PAT;
+
+const DR7_INIT_VALUE: u64 = 0x400;
 
 // VcpuState machine:
 // BSP:Zombie -> PowerOnReset -> Inited -> Running
@@ -157,5 +160,9 @@ impl Vcpu {
         self.vmcs.init_exec_ctrl();
         self.vmcs.init_entry_ctrl();
         self.vmcs.init_exit_ctrl();
+
+        let msrs = self.ctx.get_msrs();
+        self.vmcs
+            .init_guest_state(msrs.read(MSR_IA32_PAT).unwrap(), DR7_INIT_VALUE);
     }
 }

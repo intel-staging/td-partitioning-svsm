@@ -414,4 +414,8 @@ impl GuestCpuContext {
     pub fn get_msrs_mut(&mut self) -> &mut GuestCpuMsrs {
         &mut self.msrs
     }
+
+    pub fn get_msrs(&self) -> &GuestCpuMsrs {
+        &self.msrs
+    }
 }

@@ -10,7 +10,7 @@ use super::utils::TdpVmId;
 use super::vcr::{get_cr0_guest_host_mask, get_cr4_guest_host_mask};
 use super::vmcs_lib::{
     PrimaryVmExecControls, SecondaryVmExecControls, VmEntryControls, VmcsAccess,
-    VmcsField32Control, VmcsField64Control,
+    VmcsField32Control, VmcsField32Guest, VmcsField64Control, VmcsField64Guest,
 };
 use crate::cpu::features::{cpu_has_feature, X86_FEATURE_INVPCID};
 use crate::cpu::idt::common::MCE_VECTOR;
@@ -232,6 +232,21 @@ impl Vmcs {
     pub fn init_exit_ctrl(&self) {
         // No need to set up VM exit controls as this field
         // is read-only to L1 VMM
+    }
+
+    pub fn init_guest_state(&self, pat_power_on_val: u64, dr7_init_value: u64) {
+        // Guest Segment registers and CR registers are initialized
+        // when loads GuestCpuContext before vmentry
+        self.write32(VmcsField32Guest::SYSENTER_CS, 0);
+        self.write64(VmcsField64Guest::SYSENTER_ESP, 0);
+        self.write64(VmcsField64Guest::SYSENTER_EIP, 0);
+        self.write64(VmcsField64Guest::PENDING_DBG_EXCEPTIONS, 0);
+        self.write64(VmcsField64Guest::IA32_DEBUGCTL, 0);
+        self.write32(VmcsField32Guest::INTERRUPTIBILITY_INFO, 0);
+        self.write32(VmcsField32Guest::ACTIVITY_STATE, 0);
+        self.write32(VmcsField32Guest::SMBASE, 0);
+        self.write64(VmcsField64Guest::IA32_PAT, pat_power_on_val);
+        self.write64(VmcsField64Guest::DR7, dr7_init_value);
     }
 }
 
