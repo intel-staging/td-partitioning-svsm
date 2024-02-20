@@ -2,10 +2,17 @@
 //
 // Copyright (C) 2023-2024 Intel Corporation
 //
-// Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
+// Author:
+//      Chuanxiao Dong <chuanxiao.dong@intel.com>
+//      Jason CJ Chen <jason.cj.chen@intel.com>
 
 use super::utils::TdpVmId;
-use super::vmcs_lib::VmcsAccess;
+use super::vmcs_lib::{
+    PrimaryVmExecControls, SecondaryVmExecControls, VmEntryControls, VmcsAccess,
+    VmcsField32Control, VmcsField64Control,
+};
+use crate::cpu::features::{cpu_has_feature, X86_FEATURE_INVPCID};
+use crate::cpu::idt::common::MCE_VECTOR;
 use crate::cpu::msr::{
     read_msr, MSR_VMX_PROCBASED_CTLS2, MSR_VMX_TRUE_ENTRY_CTLS, MSR_VMX_TRUE_PROCBASED_CTLS,
 };
@@ -15,6 +22,8 @@ use lazy_static::lazy_static;
 pub struct Vmcs {
     vm_id: TdpVmId,
     apic_id: u32,
+    proc_vm_exec_ctrls: u32,
+    xsave_enabled: bool,
 }
 
 #[allow(dead_code)]
@@ -22,6 +31,8 @@ impl Vmcs {
     pub fn init(&mut self, vm_id: TdpVmId, apic_id: u32) {
         self.vm_id = vm_id;
         self.apic_id = apic_id;
+        self.proc_vm_exec_ctrls = 0;
+        self.xsave_enabled = false;
     }
 
     // TDP guest VMCS accessing should be happened on the
@@ -60,6 +71,161 @@ impl Vmcs {
         self.on_cpu_check();
         field.write(self.vm_id, value);
     }
+
+    pub fn init_exec_ctrl(&mut self) {
+        // All the bits in Pin based VM execution control are
+        // read-only to L1 VMM. Skip set up this control field.
+        //
+        // Set up primary processor based VM execution controls
+        // with RW bits:
+        // Enable TPR emulation as vlapic will start from xapic mode.
+        // RDPMC cause VM exit
+        let set = (PrimaryVmExecControls::CR8_LOAD_EXITING
+            | PrimaryVmExecControls::CR8_STORE_EXITING
+            | PrimaryVmExecControls::RDPMC_EXITING)
+            .bits();
+
+        // Disable VM exit for CR3 access
+        // Disable VM exit for INVLPG
+        let clear = (PrimaryVmExecControls::CR3_LOAD_EXITING
+            | PrimaryVmExecControls::CR3_STORE_EXITING
+            | PrimaryVmExecControls::INVLPG_EXITING)
+            .bits();
+
+        self.proc_vm_exec_ctrls = VMCS_CAPS
+            .check_vm_ctrl32(VmCtrlType32::PrimaryVmExec(VmCtrlCheck32 {
+                default: self.read32(VmcsField32Control::PROC_BASED_VM_EXEC_CONTROL),
+                set,
+                clear,
+            }))
+            .unwrap();
+
+        // Set up secondary processor based VM execution controls with
+        // RW bits:
+        // Enable RDTSCP
+        // Enable INVPCID
+        // Enable XSAVE
+        let mut set = (SecondaryVmExecControls::RDTSCP
+            | SecondaryVmExecControls::INVPCID
+            | SecondaryVmExecControls::XSAVES)
+            .bits();
+
+        // SDM Vol3, 25.3, setting "enable INVPCID" VM-execution to 1 with
+        // "INVLPG exiting" disabled, passes-through INVPCID instruction
+        // to guest if the instruction is supported.
+        if !cpu_has_feature(X86_FEATURE_INVPCID) {
+            set &= !SecondaryVmExecControls::INVPCID.bits();
+        }
+
+        // Disable pause-loop vmexit
+        // Disable user wait/pause
+        // Disable APICV features as vlapic starts from xapic mode
+        let clear = (SecondaryVmExecControls::PAUSE_LOOP_EXITING
+            | SecondaryVmExecControls::USR_WAIT_PAUSE
+            | SecondaryVmExecControls::APIC_REGISTER_VIRT
+            | SecondaryVmExecControls::VIRT_INTR_DELIVERY)
+            .bits();
+
+        let default = self.read32(VmcsField32Control::SECONDARY_VM_EXEC_CONTROL);
+        let secondary_vmexec = VMCS_CAPS
+            .check_vm_ctrl32(VmCtrlType32::SecondaryVmExec(VmCtrlCheck32 {
+                default,
+                set,
+                clear,
+            }))
+            .unwrap();
+
+        // TDX module may set VIRTUAL_X2APIC bit by default even TDP guest
+        // vlapic starts from xapic mode, and this bit is read-only to L1 VMM.
+        // If this is the case, set VIRTUAL_TRP in primary based VM execution
+        // control. TPR is still emulated as the CR8 loading/restore vmexit bits
+        // are also set.
+        if secondary_vmexec & SecondaryVmExecControls::VIRTUAL_X2APIC.bits() != 0 {
+            self.proc_vm_exec_ctrls |= PrimaryVmExecControls::VIRTUAL_TPR.bits();
+        }
+
+        // No feature needed in tertiary processor based VM execution controls
+        self.write32(
+            VmcsField32Control::PROC_BASED_VM_EXEC_CONTROL,
+            self.proc_vm_exec_ctrls,
+        );
+        self.write32(
+            VmcsField32Control::SECONDARY_VM_EXEC_CONTROL,
+            secondary_vmexec,
+        );
+
+        if (secondary_vmexec & SecondaryVmExecControls::XSAVES.bits()) != 0 {
+            self.write64(VmcsField64Control::XSS_EXIT_BITMAP, 0);
+            self.xsave_enabled = true;
+        }
+
+        self.write32(VmcsField32Control::TPR_THRESHOLD, 0);
+
+        // TODO: APIC-v, config APIC virtualized page address
+
+        // Set up guest exception mask bitmap setting a bit * causes a VM exit
+        // on corresponding guest * exception - pg 2902 24.6.3
+        // enable VM exit on MC always
+        self.write32(VmcsField32Control::EXCEPTION_BITMAP, 1u32 << MCE_VECTOR);
+
+        // Set up page fault error code mask - second paragraph * pg 2902
+        // 24.6.3 - guest page fault exception causing * vmexit is governed by
+        // both VMX_EXCEPTION_BITMAP and * VMX_PF_ERROR_CODE_MASK
+        self.write32(VmcsField32Control::PAGE_FAULT_ERROR_CODE_MASK, 0);
+
+        // Set up page fault error code match - second paragraph * pg 2902
+        // 24.6.3 - guest page fault exception causing * vmexit is governed by
+        // both VMX_EXCEPTION_BITMAP and * VMX_PF_ERROR_CODE_MATCH
+        self.write32(VmcsField32Control::PAGE_FAULT_ERROR_CODE_MATCH, 0);
+
+        // Set up CR3 target count - An execution of mov to CR3 * by guest
+        // causes HW to evaluate operand match with * one of N CR3-Target Value
+        // registers. The CR3 target * count values tells the number of
+        // target-value regs to evaluate
+        self.write32(VmcsField32Control::CR3_TARGET_COUNT, 0);
+
+        // TODO: configure CR0/CR4_GUEST_HOST_MASK
+
+        // The CR3 target registers work in concert with VMX_CR3_TARGET_COUNT
+        // field. Using these registers guest CR3 access can be managed. i.e.,
+        // if operand does not match one of these register values a VM exit
+        // would occur
+        self.write64(VmcsField64Control::CR3_TARGET_VALUE0, 0);
+        self.write64(VmcsField64Control::CR3_TARGET_VALUE1, 0);
+        self.write64(VmcsField64Control::CR3_TARGET_VALUE2, 0);
+        self.write64(VmcsField64Control::CR3_TARGET_VALUE3, 0);
+    }
+
+    pub fn init_entry_ctrl(&self) {
+        // All the bits in VM entry control are read-only except
+        // for IA32E_MODE. TDP guest starts from real-mode. Make
+        // sure this bit is cleared.
+        let clear = VmEntryControls::IA32E_MODE.bits();
+        self.write32(
+            VmcsField32Control::VM_ENTRY_CONTROLS,
+            VMCS_CAPS
+                .check_vm_ctrl32(VmCtrlType32::VmEntryCtrl(VmCtrlCheck32 {
+                    default: self.read32(VmcsField32Control::VM_ENTRY_CONTROLS),
+                    set: 0,
+                    clear,
+                }))
+                .unwrap(),
+        );
+
+        // Set up VM entry interrupt information field pg 2909 24.8.3
+        self.write32(VmcsField32Control::VM_ENTRY_INTR_INFO_FIELD, 0);
+
+        // Set up VM entry exception error code - pg 2910 24.8.3
+        self.write32(VmcsField32Control::VM_ENTRY_EXCEPTION_ERROR_CODE, 0);
+
+        // Set up VM entry instruction length - pg 2910 24.8.3
+        self.write32(VmcsField32Control::VM_ENTRY_INSTRUCTION_LEN, 0);
+    }
+
+    pub fn init_exit_ctrl(&self) {
+        // No need to set up VM exit controls as this field
+        // is read-only to L1 VMM
+    }
 }
 
 struct VmCtrlCheck32 {
@@ -68,7 +234,6 @@ struct VmCtrlCheck32 {
     clear: u32,
 }
 
-#[allow(dead_code)]
 enum VmCtrlType32 {
     PrimaryVmExec(VmCtrlCheck32),
     SecondaryVmExec(VmCtrlCheck32),

@@ -66,7 +66,10 @@ impl Vcpu {
                     self.reset();
                     self.update_cur_state(VcpuState::Inited);
                 }
-                VcpuState::Inited => self.update_cur_state(VcpuState::Running),
+                VcpuState::Inited => {
+                    self.configure_vmcs();
+                    self.update_cur_state(VcpuState::Running);
+                }
                 VcpuState::InitKicked => self.update_cur_state(VcpuState::WaitForSipi),
                 VcpuState::SipiKicked(_) => self.update_cur_state(VcpuState::Running),
                 VcpuState::Running => {
@@ -133,5 +136,11 @@ impl Vcpu {
 
     fn reset(&mut self) {
         //TODO: vcpu reset
+    }
+
+    fn configure_vmcs(&mut self) {
+        self.vmcs.init_exec_ctrl();
+        self.vmcs.init_entry_ctrl();
+        self.vmcs.init_exit_ctrl();
     }
 }
