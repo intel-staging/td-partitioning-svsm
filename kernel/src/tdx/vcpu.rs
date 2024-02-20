@@ -4,14 +4,18 @@
 //
 // Author: Jason CJ Chen <jason.cj.chen@intel.com>
 
+extern crate alloc;
+
 use super::gctx::GuestCpuContext;
 use super::tdcall::tdvmcall_sti_halt;
 use super::utils::{td_flush_vpid_global, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet};
+use super::vcpu_comm::VcpuCommBlock;
 use super::vmcs::Vmcs;
 use super::vmcs_lib::VmcsField32ReadOnly;
 use super::vmexit::VmExit;
 use crate::cpu::interrupts::{disable_irq, enable_irq};
 use crate::cpu::msr::{write_msr, MSR_IA32_PAT, MSR_IA32_PRED_CMD};
+use alloc::sync::Arc;
 
 const DR7_INIT_VALUE: u64 = 0x400;
 
@@ -47,6 +51,7 @@ pub struct Vcpu {
     cur_state: VcpuState,
     vmcs: Vmcs,
     ctx: GuestCpuContext,
+    cb: Arc<VcpuCommBlock>,
 }
 
 impl Vcpu {
@@ -57,6 +62,8 @@ impl Vcpu {
         self.cur_state = VcpuState::Zombie;
         self.vmcs.init(vm_id, apic_id);
         self.ctx.init(vm_id);
+        let cb = Arc::new(VcpuCommBlock::new(apic_id));
+        unsafe { core::ptr::write(core::ptr::addr_of_mut!(self.cb), cb) };
     }
 
     pub fn get_vmcs(&self) -> &Vmcs {
