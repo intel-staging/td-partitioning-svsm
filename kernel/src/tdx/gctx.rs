@@ -107,7 +107,6 @@ impl<T: Copy + Clone + Debug + Default> RegCache<T> {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Copy, Clone, Default)]
 struct GuestCpuGPRegs {
     rax: u64,
@@ -275,6 +274,26 @@ impl GuestCpuSegs {
     }
 }
 
+#[allow(dead_code)]
+pub enum GuestCpuGPRegCode {
+    Rax,
+    Rcx,
+    Rdx,
+    Rbx,
+    Rsp,
+    Rbp,
+    Rsi,
+    Rdi,
+    R8,
+    R9,
+    R10,
+    R11,
+    R12,
+    R13,
+    R14,
+    R15,
+}
+
 const REAL_MODE_RIP: u64 = 0xfff0;
 const REAL_MODE_RFLAGS: u64 = 0x02;
 const REAL_MODE_BSP_INIT_CODE_SEL: u16 = 0xf000;
@@ -429,6 +448,56 @@ impl GuestCpuContext {
 
     pub fn set_rflags(&mut self, val: u64) {
         self.tdp_ctx.rflags = val;
+    }
+
+    pub fn get_rip(&self) -> u64 {
+        self.tdp_ctx.rip
+    }
+
+    pub fn set_rip(&mut self, val: u64) {
+        self.tdp_ctx.rip = val;
+    }
+
+    pub fn get_gpreg(&self, reg: GuestCpuGPRegCode) -> u64 {
+        match reg {
+            GuestCpuGPRegCode::Rax => self.tdp_ctx.gpregs.rax,
+            GuestCpuGPRegCode::Rcx => self.tdp_ctx.gpregs.rcx,
+            GuestCpuGPRegCode::Rdx => self.tdp_ctx.gpregs.rdx,
+            GuestCpuGPRegCode::Rbx => self.tdp_ctx.gpregs.rbx,
+            GuestCpuGPRegCode::Rsp => self.tdp_ctx.gpregs.rsp,
+            GuestCpuGPRegCode::Rbp => self.tdp_ctx.gpregs.rbp,
+            GuestCpuGPRegCode::Rsi => self.tdp_ctx.gpregs.rsi,
+            GuestCpuGPRegCode::Rdi => self.tdp_ctx.gpregs.rdi,
+            GuestCpuGPRegCode::R8 => self.tdp_ctx.gpregs.r8,
+            GuestCpuGPRegCode::R9 => self.tdp_ctx.gpregs.r9,
+            GuestCpuGPRegCode::R10 => self.tdp_ctx.gpregs.r10,
+            GuestCpuGPRegCode::R11 => self.tdp_ctx.gpregs.r11,
+            GuestCpuGPRegCode::R12 => self.tdp_ctx.gpregs.r12,
+            GuestCpuGPRegCode::R13 => self.tdp_ctx.gpregs.r13,
+            GuestCpuGPRegCode::R14 => self.tdp_ctx.gpregs.r14,
+            GuestCpuGPRegCode::R15 => self.tdp_ctx.gpregs.r15,
+        }
+    }
+
+    pub fn set_gpreg(&mut self, reg: GuestCpuGPRegCode, val: u64) {
+        match reg {
+            GuestCpuGPRegCode::Rax => self.tdp_ctx.gpregs.rax = val,
+            GuestCpuGPRegCode::Rcx => self.tdp_ctx.gpregs.rcx = val,
+            GuestCpuGPRegCode::Rdx => self.tdp_ctx.gpregs.rdx = val,
+            GuestCpuGPRegCode::Rbx => self.tdp_ctx.gpregs.rbx = val,
+            GuestCpuGPRegCode::Rsp => self.tdp_ctx.gpregs.rsp = val,
+            GuestCpuGPRegCode::Rbp => self.tdp_ctx.gpregs.rbp = val,
+            GuestCpuGPRegCode::Rsi => self.tdp_ctx.gpregs.rsi = val,
+            GuestCpuGPRegCode::Rdi => self.tdp_ctx.gpregs.rdi = val,
+            GuestCpuGPRegCode::R8 => self.tdp_ctx.gpregs.r8 = val,
+            GuestCpuGPRegCode::R9 => self.tdp_ctx.gpregs.r9 = val,
+            GuestCpuGPRegCode::R10 => self.tdp_ctx.gpregs.r10 = val,
+            GuestCpuGPRegCode::R11 => self.tdp_ctx.gpregs.r11 = val,
+            GuestCpuGPRegCode::R12 => self.tdp_ctx.gpregs.r12 = val,
+            GuestCpuGPRegCode::R13 => self.tdp_ctx.gpregs.r13 = val,
+            GuestCpuGPRegCode::R14 => self.tdp_ctx.gpregs.r14 = val,
+            GuestCpuGPRegCode::R15 => self.tdp_ctx.gpregs.r15 = val,
+        }
     }
 
     pub fn pre_vmentry(&mut self) -> u64 {

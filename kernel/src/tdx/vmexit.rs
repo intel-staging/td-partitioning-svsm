@@ -5,7 +5,8 @@
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
 use super::error::{ErrExcp, TdxError};
-use super::percpu::this_vcpu;
+use super::gctx::GuestCpuGPRegCode;
+use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::utils::{L2ExitInfo, TdpVmId};
 use super::vcpu_comm::VcpuReqFlags;
 
@@ -14,6 +15,8 @@ pub enum VmExitReason {
     ExternalInterrupt,
     InitSignal,
     InterruptWindow,
+    MsrRead,
+    MsrWrite,
     UnSupported(u32),
 }
 
@@ -24,6 +27,8 @@ impl VmExitReason {
             1 => VmExitReason::ExternalInterrupt,
             3 => VmExitReason::InitSignal,
             7 => VmExitReason::InterruptWindow,
+            31 => VmExitReason::MsrRead,
+            32 => VmExitReason::MsrWrite,
             _ => VmExitReason::UnSupported(exit_reason),
         }
     }
@@ -31,13 +36,23 @@ impl VmExitReason {
 
 pub struct VmExit {
     vm_id: TdpVmId,
+    exit_instr_len: u32,
     pub reason: VmExitReason,
 }
 
 impl VmExit {
     pub fn new(vm_id: TdpVmId, l2exit_info: L2ExitInfo) -> Self {
         let reason = VmExitReason::new(&l2exit_info);
-        VmExit { vm_id, reason }
+        VmExit {
+            vm_id,
+            exit_instr_len: l2exit_info.exit_instr_len,
+            reason,
+        }
+    }
+
+    fn skip_instruction(&self) {
+        let ctx = this_vcpu_mut(self.vm_id).get_ctx_mut();
+        ctx.set_rip(ctx.get_rip() + self.exit_instr_len as u64);
     }
 
     fn handle_external_interrupt(&self) {
@@ -63,11 +78,37 @@ impl VmExit {
             .make_request(VcpuReqFlags::DIS_IRQWIN);
     }
 
+    fn handle_rdmsr(&self) -> Result<(), TdxError> {
+        let ctx = this_vcpu_mut(self.vm_id).get_ctx_mut();
+        let msr = ctx.get_gpreg(GuestCpuGPRegCode::Rcx) as u32;
+
+        ctx.get_msrs().read(msr).map(|v| {
+            // Store the MSR contents in RAX and RDX
+            // The high-order 32 bits of each of RAX and RDX are cleared
+            ctx.set_gpreg(GuestCpuGPRegCode::Rax, (v as u32).into());
+            ctx.set_gpreg(GuestCpuGPRegCode::Rdx, v >> 32);
+            self.skip_instruction();
+        })
+    }
+
+    fn handle_wrmsr(&self) -> Result<(), TdxError> {
+        let ctx = this_vcpu_mut(self.vm_id).get_ctx_mut();
+        let msr = ctx.get_gpreg(GuestCpuGPRegCode::Rcx) as u32;
+        let data = (ctx.get_gpreg(GuestCpuGPRegCode::Rdx) << 32)
+            | (ctx.get_gpreg(GuestCpuGPRegCode::Rax) as u32 as u64);
+
+        ctx.get_msrs_mut().write(msr, data).map(|_| {
+            self.skip_instruction();
+        })
+    }
+
     pub fn handle_vmexits(&self) -> Result<(), TdxError> {
         match self.reason {
             VmExitReason::ExternalInterrupt => self.handle_external_interrupt(),
             VmExitReason::InitSignal => self.handle_init_signal(),
             VmExitReason::InterruptWindow => self.handle_interrupt_window(),
+            VmExitReason::MsrRead => self.handle_rdmsr()?,
+            VmExitReason::MsrWrite => self.handle_wrmsr()?,
             VmExitReason::UnSupported(v) => {
                 log::error!("UnSupported VmExit Reason {}", v);
                 return Err(TdxError::InjectExcp(ErrExcp::UD));
