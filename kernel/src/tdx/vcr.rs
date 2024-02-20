@@ -471,7 +471,6 @@ impl GuestCpuCrRegs {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn get_cr2(&self) -> u64 {
         self.cr2.read_cache()
     }
@@ -492,7 +491,6 @@ impl GuestCpuCrRegs {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn load(&mut self) {
         self.cr0.sync_cache();
         self.cr2.sync_cache();

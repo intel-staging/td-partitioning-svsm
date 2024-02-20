@@ -247,7 +247,6 @@ struct GuestCpuSegs {
     tr: SegCache,
 }
 
-#[allow(dead_code)]
 impl GuestCpuSegs {
     fn init(&mut self, vm_id: TdpVmId) {
         self.idtr = seg_cache!(vm_id, IDTR_BASE, IDTR_LIMIT);
@@ -417,5 +416,27 @@ impl GuestCpuContext {
 
     pub fn get_msrs(&self) -> &GuestCpuMsrs {
         &self.msrs
+    }
+
+    pub fn pre_vmentry(&mut self) -> u64 {
+        // load ia32_efer if updated
+        self.ia32_efer.sync_cache();
+
+        // load Segment registers if updated
+        self.segs.load();
+
+        // Load CR registers if updated
+        self.cr.load();
+
+        // The TDP context physical address
+        // is used as the input parameter to do
+        // vmentry.
+        self.tdp_ctx_pa
+    }
+
+    pub fn post_vmexit(&mut self) {
+        // CR2 is got from native CR2 which should be happened
+        // it is changed by native software
+        let _ = self.cr.get_cr2();
     }
 }

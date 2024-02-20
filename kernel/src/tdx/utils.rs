@@ -241,7 +241,6 @@ const TDX_L2_EXIT_HOST_ROUTED_TDVMCALL: u64 = 0x0000110100000000;
 const TDX_L2_EXIT_PENDING_INTERRUPT: u64 = 0x0000110200000000;
 const TDX_PENDING_INTERRUPT: u64 = 0x0000112000000000;
 
-#[allow(dead_code)]
 pub fn td_vp_enter(vm_id: TdpVmId, ctx_pa: u64) -> VpEnterRet {
     let ret = tdcall_vp_enter(vm_id.num() << 52, ctx_pa);
     match ret.rax & TDVMCALL_STATUS_MASK {
