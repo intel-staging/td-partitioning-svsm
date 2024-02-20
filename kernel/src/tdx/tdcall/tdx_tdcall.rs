@@ -702,3 +702,31 @@ pub fn tdvmcall_share_irte_hdr(paddr: u64, vm_idx: u32) -> Result<(), TdVmcallEr
 
     Ok(())
 }
+
+pub fn tdcall_mem_page_attr_wr(
+    gpa_mapping: u64,
+    gpa_attr: u64,
+    attr_flags: u64,
+) -> Result<u64, TdCallError> {
+    loop {
+        let mut args = TdcallArgs {
+            rax: TDCALL_MEM_PAGE_ATTR_WR,
+            rcx: gpa_mapping,
+            rdx: gpa_attr,
+            r8: attr_flags,
+            ..Default::default()
+        };
+
+        let ret = td_call(&mut args);
+
+        if ret != TDCALL_STATUS_SUCCESS {
+            let err = ret.into();
+            match err {
+                TdCallError::TdxExitReasonOperandBusy => continue,
+                _ => return Err(err),
+            }
+        }
+
+        return Ok(args.rdx);
+    }
+}
