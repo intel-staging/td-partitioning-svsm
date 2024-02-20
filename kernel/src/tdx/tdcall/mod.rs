@@ -37,6 +37,8 @@ const TDCALL_VM_RD: u64 = 7;
 const TDCALL_VM_WR: u64 = 8;
 const TDCALL_VP_RD: u64 = 9;
 const TDCALL_VP_WR: u64 = 10;
+const TDCALL_VP_INVEPT: u64 = 26;
+const TDCALL_VP_INVVPID: u64 = 27;
 
 // GTDG.VP.VMCALL leaf sub-function numbers
 const TDVMCALL_CPUID: u64 = 0x0000a;

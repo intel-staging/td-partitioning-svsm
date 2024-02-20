@@ -639,3 +639,36 @@ pub fn tdcall_vm_write(field: u64, value: u64, mask: u64) -> Result<(), TdCallEr
 
     Ok(())
 }
+
+pub fn tdcall_vp_invvpid(flags: u64, gla: u64) -> Result<u64, TdCallError> {
+    let mut args = TdcallArgs {
+        rax: TDCALL_VP_INVVPID,
+        rcx: flags,
+        rdx: gla,
+        ..Default::default()
+    };
+
+    let ret = td_call(&mut args);
+
+    if ret != TDCALL_STATUS_SUCCESS {
+        return Err(ret.into());
+    }
+
+    Ok(ret)
+}
+
+pub fn tdcall_vp_invept(vm_flags: u64) -> Result<u64, TdCallError> {
+    let mut args = TdcallArgs {
+        rax: TDCALL_VP_INVEPT,
+        rcx: vm_flags,
+        ..Default::default()
+    };
+
+    let ret = td_call(&mut args);
+
+    if ret != TDCALL_STATUS_SUCCESS {
+        return Err(ret.into());
+    }
+
+    Ok(ret)
+}
