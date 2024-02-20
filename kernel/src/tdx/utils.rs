@@ -5,8 +5,12 @@
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
 use super::error::TdxError;
-use super::tdcall::{td_accept_memory, tdcall_vm_read, tdcall_vp_write, tdvmcall_mapgpa};
+use super::tdcall::{
+    td_accept_memory, tdcall_vm_read, tdcall_vp_invept, tdcall_vp_invvpid, tdcall_vp_write,
+    tdvmcall_mapgpa,
+};
 use crate::address::{Address, GuestPhysAddr};
+use crate::types::PAGE_SIZE;
 use bitflags::bitflags;
 
 // According to TDP FAS 11.1 Introduction, a TD may contain up to 4 VMs.
@@ -173,4 +177,20 @@ pub fn td_set_msr_bitmap(vm_id: TdpVmId, index: u32, val: u64, mask: u64) -> Res
         log::error!("Set MSR bitmap failed for MSR index 0x{:x}: {:?}", index, e);
         TdxError::VpWR(field, val)
     })
+}
+
+const VMX_VPID_TYPE_SINGLE_CONTEXT: u64 = 1;
+const VMX_VPID_TYPE_ALL_CONTEXT: u64 = 2;
+
+fn td_invvpid(vm_id: u64, type_id: u64, gva: u64) {
+    if type_id != VMX_VPID_TYPE_SINGLE_CONTEXT {
+        tdcall_vp_invept(1 << vm_id).expect("Failed to do invept");
+    } else {
+        tdcall_vp_invvpid(vm_id << 52, gva & !(PAGE_SIZE as u64 - 1))
+            .expect("Failed to do invvpid");
+    }
+}
+
+pub fn td_flush_vpid_global(vm_id: TdpVmId) {
+    td_invvpid(vm_id.num(), VMX_VPID_TYPE_ALL_CONTEXT, 0);
 }

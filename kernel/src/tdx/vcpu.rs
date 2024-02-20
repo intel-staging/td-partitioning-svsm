@@ -6,7 +6,7 @@
 
 use super::gctx::GuestCpuContext;
 use super::tdcall::tdvmcall_sti_halt;
-use super::utils::TdpVmId;
+use super::utils::{td_flush_vpid_global, TdpVmId};
 use super::vmcs::Vmcs;
 use crate::cpu::interrupts::{disable_irq, enable_irq};
 use crate::cpu::msr::MSR_IA32_PAT;
@@ -164,5 +164,9 @@ impl Vcpu {
         let msrs = self.ctx.get_msrs();
         self.vmcs
             .init_guest_state(msrs.read(MSR_IA32_PAT).unwrap(), DR7_INIT_VALUE);
+
+        // A power-up or a reset invalidates all linear mappings,
+        // guest-physical mappings, and combined mappings
+        td_flush_vpid_global(self.vm_id);
     }
 }
