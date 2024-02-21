@@ -10,7 +10,7 @@ use crate::cpu::msr::{write_msr, SEV_GHCB};
 use crate::error::SvsmError;
 use crate::mm::pagetable::get_init_pgtable_locked;
 use crate::mm::validate::{
-    valid_bitmap_clear_valid_4k, valid_bitmap_set_valid_4k, valid_bitmap_valid_addr,
+    valid_bitmap_clear_valid_4k, valid_bitmap_set_valid_4k, valid_bitmap_valid_page,
 };
 use crate::mm::virt_to_phys;
 use crate::sev::sev_snp_enabled;
@@ -148,7 +148,7 @@ impl GHCB {
             invalidate_page_msr(paddr)?;
 
             // Needs guarding for Stage2 GHCB
-            if valid_bitmap_valid_addr(paddr) {
+            if valid_bitmap_valid_page(paddr) {
                 valid_bitmap_clear_valid_4k(paddr);
             }
         }
@@ -186,7 +186,7 @@ impl GHCB {
         pvalidate(vaddr, PageSize::Regular, PvalidateOp::Valid)?;
 
         // Needs guarding for Stage2 GHCB
-        if valid_bitmap_valid_addr(paddr) {
+        if valid_bitmap_valid_page(paddr) {
             valid_bitmap_set_valid_4k(paddr);
         }
 

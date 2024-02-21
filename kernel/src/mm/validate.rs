@@ -26,6 +26,19 @@ fn bitmap_bytes(region: MemoryRegion<PhysAddr>) -> usize {
     page_align_up(region.len().div_ceil(PAGE_SIZE).div_ceil(u8::BITS as usize))
 }
 
+#[inline(always)]
+fn check_addr_range(
+    region: MemoryRegion<PhysAddr>,
+    paddr_begin: PhysAddr,
+    paddr_end: PhysAddr,
+) -> bool {
+    if paddr_begin > paddr_end {
+        false
+    } else {
+        paddr_begin >= region.start() && paddr_end <= region.end()
+    }
+}
+
 pub fn init_valid_bitmap_ptr(region: MemoryRegion<PhysAddr>, bitmap: *mut u64) {
     let mut vb_ref = VALID_BITMAP.lock();
     vb_ref.set_region(region);
@@ -97,9 +110,9 @@ pub fn valid_bitmap_addr() -> PhysAddr {
     vb_ref.bitmap_addr()
 }
 
-pub fn valid_bitmap_valid_addr(paddr: PhysAddr) -> bool {
+pub fn valid_bitmap_valid_page(paddr: PhysAddr) -> bool {
     let vb_ref = VALID_BITMAP.lock();
-    vb_ref.check_addr(paddr)
+    vb_ref.check_page(paddr)
 }
 
 #[derive(Debug)]
@@ -140,8 +153,18 @@ impl ValidBitmap {
         self.bitmap = Some(ValidBitmapMem::PageRefs(page_refs));
     }
 
-    fn check_addr(&self, paddr: PhysAddr) -> bool {
-        self.region.contains(paddr)
+    fn check_addr_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) -> bool {
+        check_addr_range(self.region, paddr_begin, paddr_end)
+    }
+
+    #[inline(always)]
+    fn check_page(&self, paddr: PhysAddr) -> bool {
+        self.check_addr_range(paddr, paddr + PAGE_SIZE)
+    }
+
+    #[inline(always)]
+    fn check_page_2m(&self, paddr: PhysAddr) -> bool {
+        self.check_addr_range(paddr, paddr + PAGE_SIZE_2M)
     }
 
     fn bitmap_addr(&self) -> PhysAddr {
@@ -284,7 +307,7 @@ impl ValidBitmap {
         let (index, bit) = self.index(paddr);
 
         assert!(paddr.is_page_aligned());
-        assert!(self.check_addr(paddr));
+        assert!(self.check_page(paddr));
 
         let val = self.read_bitmap_u64(index) | (1u64 << bit);
         self.write_bitmap_u64(index, val);
@@ -298,7 +321,7 @@ impl ValidBitmap {
         let (index, bit) = self.index(paddr);
 
         assert!(paddr.is_page_aligned());
-        assert!(self.check_addr(paddr));
+        assert!(self.check_page(paddr));
 
         let val = self.read_bitmap_u64(index) & !(1u64 << bit);
         self.write_bitmap_u64(index, val);
@@ -313,7 +336,7 @@ impl ValidBitmap {
         let (index, _) = self.index(paddr);
 
         assert!(paddr.is_aligned(PAGE_SIZE_2M));
-        assert!(self.check_addr(paddr));
+        assert!(self.check_page_2m(paddr));
 
         for i in 0..NR_INDEX {
             self.write_bitmap_u64(index + i, val);
@@ -380,7 +403,7 @@ impl ValidBitmap {
 
         let (index, bit) = self.index(paddr);
 
-        assert!(self.check_addr(paddr));
+        assert!(self.check_page(paddr));
 
         let mask = 1u64 << bit;
         let val = self.read_bitmap_u64(index);

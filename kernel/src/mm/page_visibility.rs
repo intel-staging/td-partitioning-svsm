@@ -9,7 +9,7 @@ use crate::cpu::flush_tlb_global_sync;
 use crate::cpu::ghcb::current_ghcb;
 use crate::cpu::percpu::this_cpu_mut;
 use crate::mm::validate::{
-    valid_bitmap_clear_valid_4k, valid_bitmap_set_valid_4k, valid_bitmap_valid_addr,
+    valid_bitmap_clear_valid_4k, valid_bitmap_set_valid_4k, valid_bitmap_valid_page,
 };
 use crate::mm::virt_to_phys;
 use crate::sev::ghcb::PageStateChangeOp;
@@ -22,7 +22,7 @@ pub fn make_page_shared(vaddr: VirtAddr) {
     pvalidate(vaddr, PageSize::Regular, PvalidateOp::Invalid)
         .expect("Pvalidate failed when making page shared");
     let paddr = virt_to_phys(vaddr);
-    if valid_bitmap_valid_addr(paddr) {
+    if valid_bitmap_valid_page(paddr) {
         valid_bitmap_clear_valid_4k(paddr);
     }
 
@@ -66,7 +66,7 @@ pub fn make_page_private(vaddr: VirtAddr) {
     // Revoke page validation before changing page state.
     pvalidate(vaddr, PageSize::Regular, PvalidateOp::Valid)
         .expect("Pvalidate failed when making page private");
-    if valid_bitmap_valid_addr(paddr) {
+    if valid_bitmap_valid_page(paddr) {
         valid_bitmap_set_valid_4k(paddr);
     }
 }
