@@ -370,49 +370,139 @@ impl ValidBitmap {
         self.set_2m(paddr, 0u64);
     }
 
-    fn modify_bitmap_word(&mut self, index: usize, mask: u64, new_val: u64) {
+    fn modify_bitmap_word(
+        &mut self,
+        op: BitmapOp,
+        index: usize,
+        mask: u64,
+    ) -> Result<(), BitmapError> {
         let val = self.read_bitmap_u64(index);
-        let val = (val & !mask) | (new_val & mask);
-        self.write_bitmap_u64(index, val);
+        match op {
+            BitmapOp::Set => {
+                self.write_bitmap_u64(index, val | mask);
+                Ok(())
+            }
+            BitmapOp::Clear => {
+                self.write_bitmap_u64(index, val & !mask);
+                Ok(())
+            }
+            _ => Err(BitmapError::Abort),
+        }
     }
 
-    fn set_range(&mut self, paddr_begin: PhysAddr, paddr_end: PhysAddr, new_val: bool) {
+    fn modify_range(
+        &mut self,
+        paddr_begin: PhysAddr,
+        paddr_end: PhysAddr,
+        op: BitmapOp,
+    ) -> Result<(), BitmapError> {
         if !self.initialized() {
-            return;
+            return Err(BitmapError::Abort);
         }
 
         // All ones.
         let mask = !0u64;
-        // All ones if val == true, zero otherwise.
-        let new_val = 0u64.wrapping_sub(new_val as u64);
 
         let (index_head, bit_head_begin) = self.index(paddr_begin);
         let (index_tail, bit_tail_end) = self.index(paddr_end);
         if index_head != index_tail {
             let mask_head = mask >> bit_head_begin << bit_head_begin;
-            self.modify_bitmap_word(index_head, mask_head, new_val);
+            self.modify_bitmap_word(op, index_head, mask_head)?;
 
             for index in (index_head + 1)..index_tail {
-                self.write_bitmap_u64(index, new_val);
+                self.modify_bitmap_word(op, index, mask)?;
             }
 
             if bit_tail_end != 0 {
                 let mask_tail = mask << (64 - bit_tail_end) >> (64 - bit_tail_end);
-                self.modify_bitmap_word(index_tail, mask_tail, new_val);
+                self.modify_bitmap_word(op, index_tail, mask_tail)?;
             }
         } else {
             let mask = mask >> bit_head_begin << bit_head_begin;
             let mask = mask << (64 - bit_tail_end) >> (64 - bit_tail_end);
-            self.modify_bitmap_word(index_head, mask, new_val);
+            self.modify_bitmap_word(op, index_head, mask)?;
         }
+
+        Ok(())
     }
 
     fn set_valid_range(&mut self, paddr_begin: PhysAddr, paddr_end: PhysAddr) {
-        self.set_range(paddr_begin, paddr_end, true);
+        self.modify_range(paddr_begin, paddr_end, BitmapOp::Set)
+            .expect("ValidBitmap: Failed to set valid range");
     }
 
     fn clear_valid_range(&mut self, paddr_begin: PhysAddr, paddr_end: PhysAddr) {
-        self.set_range(paddr_begin, paddr_end, false);
+        self.modify_range(paddr_begin, paddr_end, BitmapOp::Clear)
+            .expect("ValidBitmap: Failed to clear valid range");
+    }
+
+    fn check_bitmap_word(&self, op: BitmapOp, index: usize, mask: u64) -> Result<(), BitmapError> {
+        let val = self.read_bitmap_u64(index);
+        match op {
+            BitmapOp::CheckValid => {
+                if (val & mask) == mask {
+                    Ok(())
+                } else {
+                    Err(BitmapError::Abort)
+                }
+            }
+            BitmapOp::CheckInvalid => {
+                if (val & mask) == 0 {
+                    Ok(())
+                } else {
+                    Err(BitmapError::Abort)
+                }
+            }
+            _ => Err(BitmapError::Abort),
+        }
+    }
+
+    fn check_range(
+        &self,
+        paddr_begin: PhysAddr,
+        paddr_end: PhysAddr,
+        op: BitmapOp,
+    ) -> Result<(), BitmapError> {
+        if !self.initialized() {
+            return Err(BitmapError::Abort);
+        }
+
+        // All ones.
+        let mask = !0u64;
+
+        let (index_head, bit_head_begin) = self.index(paddr_begin);
+        let (index_tail, bit_tail_end) = self.index(paddr_end);
+        if index_head != index_tail {
+            let mask_head = mask >> bit_head_begin << bit_head_begin;
+            self.check_bitmap_word(op, index_head, mask_head)?;
+
+            for index in (index_head + 1)..index_tail {
+                self.check_bitmap_word(op, index, !0u64)?;
+            }
+
+            if bit_tail_end != 0 {
+                let mask_tail = mask << (64 - bit_tail_end) >> (64 - bit_tail_end);
+                self.check_bitmap_word(op, index_tail, mask_tail)?;
+            }
+        } else {
+            let mask = mask >> bit_head_begin << bit_head_begin;
+            let mask = mask << (64 - bit_tail_end) >> (64 - bit_tail_end);
+            self.check_bitmap_word(op, index_head, mask)?;
+        }
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn is_valid_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) -> bool {
+        self.check_range(paddr_begin, paddr_end, BitmapOp::CheckValid)
+            .is_ok()
+    }
+
+    #[allow(dead_code)]
+    pub fn is_invalid_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) -> bool {
+        self.check_range(paddr_begin, paddr_end, BitmapOp::CheckInvalid)
+            .is_ok()
     }
 
     fn is_valid_4k(&self, paddr: PhysAddr) -> bool {
