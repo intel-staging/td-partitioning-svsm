@@ -105,7 +105,7 @@ impl IdtEntry {
     }
 }
 
-const IDT_ENTRIES: usize = 256;
+pub const IDT_ENTRIES: usize = 256;
 
 #[repr(C, packed)]
 struct IdtDesc {

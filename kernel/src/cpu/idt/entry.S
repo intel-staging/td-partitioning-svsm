@@ -58,6 +58,21 @@ asm_entry_\name:
 	jmp	default_return
 .endm
 
+        .align 64
+        .globl interrupt_handler_array
+interrupt_handler_array:
+        vec = 32
+.rept 225
+        .align 64
+        pushq   $0
+        pushq   $vec
+        push_regs
+        movq    %rsp, %rdi
+        call    generic_interrupt_handler
+        jmp     default_return
+        vec = vec + 1
+.endr
+
 default_return:
 	pop_regs
 	iretq

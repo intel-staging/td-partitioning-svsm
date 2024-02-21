@@ -45,6 +45,7 @@ extern "C" {
     fn asm_entry_hv();
     fn asm_entry_vc();
     fn asm_entry_sx();
+    static interrupt_handler_array: u8;
 }
 
 fn init_ist_vectors() {
@@ -79,6 +80,18 @@ pub fn early_idt_init() {
     idt.set_entry(HV_VECTOR, IdtEntry::entry(asm_entry_hv));
     idt.set_entry(VC_VECTOR, IdtEntry::entry(asm_entry_vc));
     idt.set_entry(SX_VECTOR, IdtEntry::entry(asm_entry_sx));
+
+    // Set IDT interrupt handlers
+    let handlers = unsafe { VirtAddr::from(core::ptr::addr_of!(interrupt_handler_array)) };
+    for vec in 32..256 {
+        idt.set_entry(
+            vec,
+            IdtEntry::entry(unsafe {
+                core::mem::transmute::<_, unsafe extern "C" fn()>(handlers + (64 * (vec - 32)))
+            }),
+        );
+    }
+
     idt.load();
 }
 
