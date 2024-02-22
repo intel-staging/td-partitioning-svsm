@@ -20,6 +20,8 @@ pub enum TdxError {
     IoEmulNotSupport,
     // Guest fatal Error like triple fault
     GuestFatalErr,
+    // Guest Page Table related failure
+    GuestPGT,
     // Require to inject exception to Guest
     InjectExcp(ErrExcp),
     // Invalid vector

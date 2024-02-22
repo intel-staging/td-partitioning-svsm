@@ -429,6 +429,14 @@ impl GuestCpuContext {
         self.cr.get_cr0()
     }
 
+    pub fn get_cr3(&self) -> u64 {
+        self.cr.get_cr3()
+    }
+
+    pub fn get_cr4(&self) -> u64 {
+        self.cr.get_cr4()
+    }
+
     pub fn get_msrs_mut(&mut self) -> &mut GuestCpuMsrs {
         &mut self.msrs
     }
@@ -498,6 +506,10 @@ impl GuestCpuContext {
             GuestCpuGPRegCode::R14 => self.tdp_ctx.gpregs.r14 = val,
             GuestCpuGPRegCode::R15 => self.tdp_ctx.gpregs.r15 = val,
         }
+    }
+
+    pub fn get_cpl(&self) -> u8 {
+        ((self.segs.ss.attr.read_cache() >> 5) & 3) as u8
     }
 
     pub fn pre_vmentry(&mut self) -> u64 {
