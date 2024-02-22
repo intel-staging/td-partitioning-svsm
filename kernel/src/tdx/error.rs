@@ -19,6 +19,8 @@ pub enum TdxError {
     MapGpa,
     // Accept memory related error
     PageAccept,
+    // Read Guest Memory failed
+    ReadGuestMem,
     // Tdp guest is not supported
     TdpNotSupport,
     // Unaligned phys Address
@@ -27,4 +29,6 @@ pub enum TdxError {
     VmRD(u64),
     // Vp write related error
     VpWR(u64, u64),
+    // Write Guest Memory failed
+    WriteGuestMem,
 }

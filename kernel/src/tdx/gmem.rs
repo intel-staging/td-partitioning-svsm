@@ -12,10 +12,12 @@ use super::utils::td_convert_guest_pages;
 use crate::address::{Address, GuestPhysAddr};
 use crate::locking::RWLock;
 use crate::mm::alloc::allocate_file_page_ref;
+use crate::mm::guestmem::GuestMemMap;
 use crate::mm::memory::get_memory_map;
 use crate::mm::validate::{AtomicValidBitmap, ValidBitmap};
 use crate::utils::{immut_after_init::ImmutAfterInitCell, MemoryRegion};
 use alloc::vec::Vec;
+use core::mem::size_of;
 
 #[derive(Debug)]
 struct GuestMemBitmap {
@@ -228,7 +230,6 @@ fn set_accepted_bitmap(
         .map(|bitmaps| bitmaps.set_accepted_bitmap(gpa_start, gpa_end))
 }
 
-#[allow(dead_code)]
 pub fn accept_guest_mem(
     gpa_start: GuestPhysAddr,
     gpa_end: GuestPhysAddr,
@@ -279,4 +280,46 @@ pub fn convert_guest_mem(
         init_gmem_bitmaps();
         modify_shared_bitmap(gpa_start, gpa_end, shared).unwrap()
     }
+}
+
+#[allow(dead_code)]
+pub fn copy_from_gpa<T>(gpa: GuestPhysAddr) -> Result<T, TdxError>
+where
+    T: Sized + Copy,
+{
+    let size = size_of::<T>();
+    let aligned_gpa_start = gpa.page_align();
+    let aligned_gpa_end = (gpa + size).page_align_up();
+    accept_guest_mem(aligned_gpa_start, aligned_gpa_end)?;
+    GuestMemMap::<T>::new(gpa, size)
+        .map_err(|e| {
+            log::error!("copy_from_gpa failed to create GuestMemMap: {:?}", e);
+            TdxError::ReadGuestMem
+        })?
+        .read()
+        .map_err(|e| {
+            log::error!("copy_from_gpa failed: {:?}", e);
+            TdxError::ReadGuestMem
+        })
+}
+
+#[allow(dead_code)]
+pub fn copy_to_gpa<T>(gpa: GuestPhysAddr, buf: T) -> Result<(), TdxError>
+where
+    T: Sized + Copy,
+{
+    let size = size_of::<T>();
+    let aligned_gpa_start = gpa.page_align();
+    let aligned_gpa_end = (gpa + size).page_align_up();
+    accept_guest_mem(aligned_gpa_start, aligned_gpa_end)?;
+    GuestMemMap::<T>::new(gpa, size)
+        .map_err(|e| {
+            log::error!("copy_to_gpa failed to create GuestMemMap: {:?}", e);
+            TdxError::WriteGuestMem
+        })?
+        .write(buf)
+        .map_err(|e| {
+            log::error!("copy_to_gpa failed: {:?}", e);
+            TdxError::WriteGuestMem
+        })
 }
