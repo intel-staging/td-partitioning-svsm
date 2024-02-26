@@ -564,6 +564,31 @@ impl MsrEmulation for ApicBaseVmsr {
     }
 }
 
+#[derive(Debug)]
+struct X2ApicVmsr(u32);
+
+impl BoxedMsrEmulation for X2ApicVmsr {
+    fn new(msr: u32) -> Self {
+        X2ApicVmsr(msr)
+    }
+}
+
+impl MsrEmulation for X2ApicVmsr {
+    fn address(&self) -> u32 {
+        self.0
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        // TODO: X2APIC msr should be emulated by vlapic.
+        Err(TdxError::Vmsr)
+    }
+
+    fn write(&mut self, _vm_id: TdpVmId, _data: u64) -> Result<(), TdxError> {
+        // TODO: X2APIC msr should be emulated by vlapic.
+        Err(TdxError::Vmsr)
+    }
+}
+
 const PASSTHROUGH_MSRS: &[u32] = &[
     MSR_IA32_SPEC_CTRL,
     MSR_IA32_PRED_CMD,
@@ -611,10 +636,13 @@ const EMULATED_MSRS: &[EmulatedMsrs] = &[
 
 const MSR_RANGE_MTRR_RANGE: RangeInclusive<u32> =
     MSR_IA32_MTRR_RANGE_FIRST..=MSR_IA32_MTRR_RANGE_LAST;
+const MSR_RANGE_X2APIC: RangeInclusive<u32> = MSR_IA32_EXT_APIC_FIRST..=MSR_IA32_EXT_APIC_LAST;
 
 type EmulatedMsrsRange<'a> = (&'a RangeInclusive<u32>, fn(u32) -> Box<dyn MsrEmulation>);
-const EMULATED_MSRS_RANGE: &[EmulatedMsrsRange<'_>] =
-    &[(&MSR_RANGE_MTRR_RANGE, PassthruMsr::alloc)];
+const EMULATED_MSRS_RANGE: &[EmulatedMsrsRange<'_>] = &[
+    (&MSR_RANGE_MTRR_RANGE, PassthruMsr::alloc),
+    (&MSR_RANGE_X2APIC, X2ApicVmsr::alloc),
+];
 
 struct GuestCpuMsr(Box<dyn MsrEmulation>);
 
@@ -714,5 +742,39 @@ impl GuestCpuMsrs {
         } else {
             UnsupportedMsr::new(msr).write(vm_id, data)
         }
+    }
+
+    pub fn update_msr_bitmap_x2apic_apicv(&mut self) {
+        let mut bitmap = self.new_bitmap_ref();
+
+        for msr in MSR_RANGE_X2APIC {
+            bitmap
+                .intercept(msr, InterceptMsrType::Write)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "error configuring MSR interception for x2APIC MSR 0x{:x}",
+                        msr
+                    )
+                });
+        }
+
+        // Use read-only interception for write-only registers to inject #GP
+        // on reads. EOI and Self-IPI writes are disabled for EOI, TPR and
+        // Self-IPI as writes to them are virtualized with Register
+        // Virtualization
+        //
+        // Refer to Section 29.1 in Intel SDM Vol. 3
+        bitmap
+            .intercept(MSR_IA32_EXT_APIC_CUR_COUNT, InterceptMsrType::Read)
+            .expect("error configuring MSR interception for MSR_IA32_EXT_APIC_CUR_COUNT");
+        bitmap
+            .intercept(MSR_IA32_EXT_APIC_EOI, InterceptMsrType::Disable)
+            .expect("error configuring MSR interception for MSR_IA32_EXT_APIC_EOI");
+        bitmap
+            .intercept(MSR_IA32_EXT_APIC_SELF_IPI, InterceptMsrType::Disable)
+            .expect("error configuring MSR interception for MSR_IA32_EXT_APIC_SELF_IPI");
+        bitmap
+            .intercept(MSR_IA32_EXT_APIC_TPR, InterceptMsrType::Disable)
+            .expect("error configuring MSR interception for MSR_IA32_EXT_APIC_TPR");
     }
 }

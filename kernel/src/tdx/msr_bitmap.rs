@@ -39,7 +39,6 @@ impl MsrBitmap {
     }
 }
 
-#[allow(dead_code)]
 pub enum InterceptMsrType {
     Disable,
     Read,
