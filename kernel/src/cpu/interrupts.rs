@@ -9,3 +9,7 @@ use core::arch::asm;
 pub fn enable_irq() {
     unsafe { asm!("sti") };
 }
+
+pub fn disable_irq() {
+    unsafe { asm!("cli") };
+}
