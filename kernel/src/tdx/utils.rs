@@ -5,7 +5,8 @@
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
 use super::error::TdxError;
-use super::tdcall::tdcall_vm_read;
+use super::tdcall::{tdcall_vm_read, tdcall_vp_write};
+use bitflags::bitflags;
 
 // According to TDP FAS 11.1 Introduction, a TD may contain up to 4 VMs.
 // And one VM is primary VM (known as the L1 VM) and the other 3 are nested
@@ -30,6 +31,10 @@ impl TdpVmId {
     pub fn index(&self) -> usize {
         (self.vm_id - 1) as usize
     }
+
+    fn num(&self) -> u64 {
+        self.vm_id
+    }
 }
 
 const MD_TDCS_NUM_L2_VMS: u64 = 0x9010000100000005;
@@ -41,4 +46,24 @@ pub fn td_num_l2_vms() -> Result<u64, TdxError> {
     } else {
         Err(TdxError::TdpNotSupport)
     }
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug)]
+    pub struct L2CtlsFlags: u64 {
+        const EnableSharedEPTP = 1 << 0;
+        const EnableTdVmcall   = 1 << 1;
+        const EnableExtedVE    = 1 << 2;
+    }
+}
+
+const MD_TDVPS_L2_CTLS: u64 = 0xA020000300000050;
+const MD_TDVPS_L2_CTLS_MASK: u64 = 0x7;
+pub fn tdvps_l2_ctls(vm_id: TdpVmId, l2_ctls: L2CtlsFlags) -> Result<(), TdxError> {
+    tdcall_vp_write(
+        MD_TDVPS_L2_CTLS + vm_id.num(),
+        l2_ctls.bits(),
+        MD_TDVPS_L2_CTLS_MASK,
+    )
+    .map_err(|_| TdxError::VpWR(MD_TDVPS_L2_CTLS + vm_id.num(), l2_ctls.bits()))
 }

@@ -12,4 +12,6 @@ pub enum TdxError {
     TdpNotSupport,
     // Vm read related error
     VmRD(u64),
+    // Vp write related error
+    VpWR(u64, u64),
 }

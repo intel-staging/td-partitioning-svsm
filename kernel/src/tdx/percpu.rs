@@ -7,7 +7,7 @@
 //  Jason CJ Chen <jason.cj.chen@intel.com>
 
 use super::tdp::init_tdps;
-use super::utils::{TdpVmId, MAX_NUM_L2_VMS};
+use super::utils::{tdvps_l2_ctls, L2CtlsFlags, TdpVmId, MAX_NUM_L2_VMS};
 use super::vcpu::Vcpu;
 use crate::address::VirtAddr;
 use crate::cpu::percpu::PerCpuArch;
@@ -21,11 +21,14 @@ use core::mem::MaybeUninit;
 
 struct TdpVp {
     vcpu: Vcpu,
+    l2ctls: L2CtlsFlags,
 }
 
 impl TdpVp {
     fn init(&mut self, vm_id: TdpVmId, apic_id: u32, is_bsp: bool) {
         self.vcpu.init(vm_id, apic_id, is_bsp);
+        self.l2ctls = L2CtlsFlags::EnableSharedEPTP;
+        tdvps_l2_ctls(vm_id, self.l2ctls).expect("Failed to set L2 controls");
     }
 
     fn run(&mut self) {
