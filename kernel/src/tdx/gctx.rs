@@ -410,4 +410,8 @@ impl GuestCpuContext {
     pub fn get_cr0(&self) -> u64 {
         self.cr.get_cr0()
     }
+
+    pub fn get_msrs_mut(&mut self) -> &mut GuestCpuMsrs {
+        &mut self.msrs
+    }
 }

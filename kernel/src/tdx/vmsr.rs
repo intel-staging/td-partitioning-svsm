@@ -11,7 +11,7 @@ use super::msr_bitmap::{InterceptMsrType, MsrBitmap, MsrBitmapRef};
 use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::tdcall::{tdvmcall_rdmsr, tdvmcall_wrmsr, TdVmcallError};
 use super::utils::TdpVmId;
-use super::vmcs_lib::VmcsField64Guest;
+use super::vmcs_lib::{VmcsField64Control, VmcsField64Guest};
 use crate::cpu::control_regs::CR0Flags;
 use crate::cpu::cpuid::cpuid;
 use crate::cpu::efer::EFERFlags;
@@ -364,6 +364,181 @@ impl MsrEmulation for MiscEnableVmsr {
     }
 }
 
+#[derive(Debug)]
+struct TscVmsr;
+
+impl BoxedMsrEmulation for TscVmsr {
+    fn new(_msr: u32) -> Self {
+        TscVmsr
+    }
+}
+
+impl MsrEmulation for TscVmsr {
+    fn address(&self) -> u32 {
+        MSR_IA32_TIME_STAMP_COUNTER
+    }
+
+    // Intel SDM Vol 3 17.17.3:
+    //
+    // If an execution of WRMSR to the IA32_TIME_STAMP_COUNTER MSR adds
+    // (or subtracts) value X from the TSC, the logical processor also
+    // adds (or subtracts) value X from the IA32_TSC_ADJUST MSR.
+    //
+    // So, here we should update VMCS.OFFSET and vAdjust accordingly.
+    //   - VMCS.OFFSET = L2 TSC - L1 TSC
+    //   - vAdjust += VMCS.OFFSET's delta
+    fn write(&mut self, vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        // Intel SDM Vol 3 24.6.5
+        // The value of the TSC offset is added to the value of the
+        // time-stamp counter
+        let delta = data
+            - (this_vcpu(vm_id)
+                .get_vmcs()
+                .read64(VmcsField64Control::TSC_OFFSET)
+                + rdtsc());
+        let vmsrs = this_vcpu_mut(vm_id).get_ctx_mut().get_msrs_mut();
+        let adj = vmsrs.read(MSR_IA32_TSC_ADJUST).unwrap();
+        vmsrs.write(MSR_IA32_TSC_ADJUST, adj + delta)
+    }
+}
+
+#[derive(Debug)]
+struct TscAdjustVmsr(u64);
+
+impl TscAdjustVmsr {
+    // If TSC_OFFSET is 0, no need to trap the writes to IA32_TSC_DEADLINE
+    // since L2 TSC == L1 TSC. Only writes to vTSC_ADJUST are trapped.
+    fn update_tsc_msr_bitmap(vm_id: TdpVmId, intercept: bool) {
+        let mut bitmap = this_vcpu_mut(vm_id)
+            .get_ctx_mut()
+            .get_msrs_mut()
+            .new_bitmap_ref();
+
+        if intercept {
+            bitmap
+                .intercept(MSR_IA32_TSC_DEADLINE, InterceptMsrType::ReadWrite)
+                .expect("error configuring MSR interception for TSCDEADLINE MSR");
+            bitmap
+                .intercept(MSR_IA32_TSC_ADJUST, InterceptMsrType::ReadWrite)
+                .expect("error configuring MSR interception for TSCADJ MSR");
+
+            if bitmap.is_dirty() {
+                // Update vTSC_DEADLINE
+                this_vcpu_mut(vm_id)
+                    .get_ctx_mut()
+                    .get_msrs_mut()
+                    .write(
+                        MSR_IA32_TSC_DEADLINE,
+                        read_msr(MSR_IA32_TSC_DEADLINE).unwrap(),
+                    )
+                    .unwrap();
+            }
+        } else {
+            bitmap
+                .intercept(MSR_IA32_TSC_DEADLINE, InterceptMsrType::Disable)
+                .expect("error configuring MSR interception for TSCDEADLINE MSR");
+            bitmap
+                .intercept(MSR_IA32_TSC_ADJUST, InterceptMsrType::Write)
+                .expect("error configuring MSR interception for TSCADJ MSR");
+
+            if bitmap.is_dirty() {
+                let vmsrs = this_vcpu_mut(vm_id).get_ctx_mut().get_msrs_mut();
+                if read_msr(MSR_IA32_TSC_DEADLINE).unwrap() != 0 {
+                    // If the timer hasn't expired, update TSC_DEADLINE
+                    write_msr(
+                        MSR_IA32_TSC_DEADLINE,
+                        vmsrs.read(MSR_IA32_TSC_DEADLINE).unwrap(),
+                    )
+                    .unwrap();
+                } else {
+                    // If the timer has expired, write 0 to vTSC_DEADLINE
+                    vmsrs.write(MSR_IA32_TSC_DEADLINE, 0).unwrap();
+                }
+            }
+        }
+    }
+}
+
+impl BoxedMsrEmulation for TscAdjustVmsr {
+    fn new(_msr: u32) -> Self {
+        // Intel SDM Vol 3 17.17.3
+        // Reset value is 0
+        TscAdjustVmsr(0)
+    }
+}
+
+impl MsrEmulation for TscAdjustVmsr {
+    fn address(&self) -> u32 {
+        MSR_IA32_TSC_ADJUST
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        Ok(self.0)
+    }
+
+    // Intel SDM Vol 3 17.17.3:
+    //
+    // If an execution of WRMSR to the IA32_TSC_ADJUST MSR adds (or
+    // subtracts) value X from that MSR, the logical processor also
+    // adds (or subtracts) value X from the TSC.
+    //
+    // So, here we should update VMCS.OFFSET and vAdjust accordingly.
+    //   - VMCS.OFFSET += vAdjust's delta
+    //   - vAdjust = new vAdjust set by the guest
+    fn write(&mut self, vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        // Delta between the new and the existing IA32_TSC_ADJUST
+        let vmcs = this_vcpu(vm_id).get_vmcs();
+        let delta = data - self.0;
+        let offset = vmcs.read64(VmcsField64Control::TSC_OFFSET);
+        if delta != 0 {
+            // Apply this delta to the existing TSC_OFFSET
+            vmcs.write64(VmcsField64Control::TSC_OFFSET, offset + delta);
+        }
+        // Update this MSR
+        self.0 = data;
+        Self::update_tsc_msr_bitmap(vm_id, offset + delta != 0);
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct TscDeadlineVmsr(u64);
+
+impl TscDeadlineVmsr {
+    fn get(&self) -> u64 {
+        self.0
+    }
+
+    fn set(&mut self, val: u64) {
+        self.0 = val;
+    }
+}
+
+impl BoxedMsrEmulation for TscDeadlineVmsr {
+    fn new(_msr: u32) -> Self {
+        // Intel SDM Vol 3 10.5.4.1
+        // Reset value is 0
+        TscDeadlineVmsr(0)
+    }
+}
+
+impl MsrEmulation for TscDeadlineVmsr {
+    fn address(&self) -> u32 {
+        MSR_IA32_TSC_DEADLINE
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        //TODO: TSC_DEADLINE should be emulated by vlapic.
+        Ok(self.get())
+    }
+
+    fn write(&mut self, _vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        //TODO: TSC_DEADLINE should be emulated by vlapic.
+        self.set(data);
+        Ok(())
+    }
+}
+
 const PASSTHROUGH_MSRS: &[u32] = &[
     MSR_IA32_SPEC_CTRL,
     MSR_IA32_PRED_CMD,
@@ -389,9 +564,11 @@ const PASSTHROUGH_MSRS: &[u32] = &[
 
 type EmulatedMsrs = (u32, fn(u32) -> Box<dyn MsrEmulation>);
 const EMULATED_MSRS: &[EmulatedMsrs] = &[
+    (MSR_IA32_TIME_STAMP_COUNTER, TscVmsr::alloc),
     (MSR_IA32_PLATFORM_ID, ZeroedRoMsr::alloc),
     (MSR_SMI_COUNT, ZeroedRoMsr::alloc),
     (MSR_IA32_FEATURE_CONTROL, FeatureControlVmsr::alloc),
+    (MSR_IA32_TSC_ADJUST, TscAdjustVmsr::alloc),
     (MSR_IA32_BIOS_UPDT_TRIG, IgnoredWoMsr::alloc),
     (MSR_PLATFORM_INFO, ZeroedRoMsr::alloc),
     (MSR_MISC_FEATURE_ENABLES, ZeroedRoMsr::alloc),
@@ -401,6 +578,7 @@ const EMULATED_MSRS: &[EmulatedMsrs] = &[
     (MSR_IA32_PERF_CTL, NoopMsr::alloc),
     (MSR_IA32_MISC_ENABLE, MiscEnableVmsr::alloc),
     (MSR_IA32_PAT, PatVmsr::alloc),
+    (MSR_IA32_TSC_DEADLINE, TscDeadlineVmsr::alloc),
     (EFER, EferVmsr::alloc),
     (MSR_IA32_CSTAR, IgnoredRwMsr::alloc),
 ];
@@ -466,6 +644,10 @@ impl GuestCpuMsrs {
                     )
                 });
         }
+
+        bitmap
+            .intercept(MSR_IA32_TIME_STAMP_COUNTER, InterceptMsrType::Write)
+            .expect("error configuring MSR interception for TSC MSR");
 
         // CR0.CD is initially clear
         bitmap

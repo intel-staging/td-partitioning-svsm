@@ -8,9 +8,11 @@ use crate::error::SvsmError;
 use bitflags::bitflags;
 use core::arch::asm;
 
+pub const MSR_IA32_TIME_STAMP_COUNTER: u32 = 0x0000_0010;
 pub const MSR_IA32_PLATFORM_ID: u32 = 0x0000_0017;
 pub const MSR_SMI_COUNT: u32 = 0x0000_0034;
 pub const MSR_IA32_FEATURE_CONTROL: u32 = 0x0000_003A;
+pub const MSR_IA32_TSC_ADJUST: u32 = 0x0000_003B;
 pub const MSR_IA32_SPEC_CTRL: u32 = 0x0000_0048;
 pub const MSR_IA32_PRED_CMD: u32 = 0x0000_0049;
 pub const MSR_IA32_BIOS_UPDT_TRIG: u32 = 0x0000_0079;
@@ -39,6 +41,7 @@ pub const MSR_IA32_VMX_CR4_FIXED1: u32 = 0x0000_0489;
 pub const MSR_VMX_PROCBASED_CTLS2: u32 = 0x0000_048B;
 pub const MSR_VMX_TRUE_PROCBASED_CTLS: u32 = 0x0000_048E;
 pub const MSR_VMX_TRUE_ENTRY_CTLS: u32 = 0x0000_0490;
+pub const MSR_IA32_TSC_DEADLINE: u32 = 0x0000_06E0;
 
 // MTRR Range Registers
 pub const MSR_IA32_MTRR_RANGE_FIRST: u32 = 0x0000_0200;

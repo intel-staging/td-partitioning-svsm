@@ -135,7 +135,6 @@ impl<'a> MsrBitmapRef<'a> {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn is_dirty(&self) -> bool {
         !self.dirty.is_empty()
     }
