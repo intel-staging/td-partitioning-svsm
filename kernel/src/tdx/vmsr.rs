@@ -18,6 +18,7 @@ use crate::cpu::efer::EFERFlags;
 use crate::cpu::msr::*;
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
+use core::ops::RangeInclusive;
 
 trait MsrEmulation: core::fmt::Debug {
     fn address(&self) -> u32;
@@ -368,12 +369,14 @@ const PASSTHROUGH_MSRS: &[u32] = &[
     MSR_IA32_PRED_CMD,
     MSR_IA32_BIOS_SIGN_ID,
     MSR_IA32_UMWAIT_CONTROL,
+    MSR_IA32_MTRR_CAP,
     MSR_IA32_ARCH_CAPABILITIES,
     MSR_IA32_SYSENTER_CS,
     MSR_IA32_SYSENTER_ESP,
     MSR_IA32_SYSENTER_EIP,
     MSR_IA32_XFD,
     MSR_IA32_DEBUGCTL,
+    MSR_IA32_MTRR_DEF_TYPE,
     MSR_IA32_XSS,
     MSR_IA32_STAR,
     MSR_IA32_LSTAR,
@@ -402,6 +405,13 @@ const EMULATED_MSRS: &[EmulatedMsrs] = &[
     (MSR_IA32_CSTAR, IgnoredRwMsr::alloc),
 ];
 
+const MSR_RANGE_MTRR_RANGE: RangeInclusive<u32> =
+    MSR_IA32_MTRR_RANGE_FIRST..=MSR_IA32_MTRR_RANGE_LAST;
+
+type EmulatedMsrsRange<'a> = (&'a RangeInclusive<u32>, fn(u32) -> Box<dyn MsrEmulation>);
+const EMULATED_MSRS_RANGE: &[EmulatedMsrsRange<'_>] =
+    &[(&MSR_RANGE_MTRR_RANGE, PassthruMsr::alloc)];
+
 struct GuestCpuMsr(Box<dyn MsrEmulation>);
 
 pub struct GuestCpuMsrs {
@@ -423,6 +433,12 @@ impl GuestCpuMsrs {
             self.set(msr, allocfn(msr));
         }
 
+        for &(msrs, allocfn) in EMULATED_MSRS_RANGE {
+            for msr in msrs.clone() {
+                self.set(msr, allocfn(msr));
+            }
+        }
+
         for &msr in PASSTHROUGH_MSRS.iter() {
             self.set(msr, PassthruMsr::alloc(msr));
         }
@@ -435,6 +451,17 @@ impl GuestCpuMsrs {
                 .unwrap_or_else(|_| {
                     panic!(
                         "error configuring MSR interception for passthru MSR 0x{:x}",
+                        msr
+                    )
+                });
+        }
+
+        for msr in MSR_RANGE_MTRR_RANGE {
+            bitmap
+                .intercept(msr, InterceptMsrType::Disable)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "error configuring MSR interception for MTRR Range MSR 0x{:x}",
                         msr
                     )
                 });
