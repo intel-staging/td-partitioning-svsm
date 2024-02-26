@@ -155,6 +155,26 @@ impl MsrEmulation for EferVmsr {
     }
 }
 
+#[derive(Debug)]
+struct FeatureControlVmsr(u64);
+
+impl BoxedMsrEmulation for FeatureControlVmsr {
+    fn new(_msr: u32) -> Self {
+        // Lock out all of the features
+        FeatureControlVmsr(MsrIa32FeatureControl::LOCK.bits())
+    }
+}
+
+impl MsrEmulation for FeatureControlVmsr {
+    fn address(&self) -> u32 {
+        MSR_IA32_FEATURE_CONTROL
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        Ok(self.0)
+    }
+}
+
 const PASSTHROUGH_MSRS: &[u32] = &[
     MSR_IA32_SPEC_CTRL,
     MSR_IA32_PRED_CMD,
@@ -177,7 +197,11 @@ const PASSTHROUGH_MSRS: &[u32] = &[
 ];
 
 type EmulatedMsrs = (u32, fn(u32) -> Box<dyn MsrEmulation>);
-const EMULATED_MSRS: &[EmulatedMsrs] = &[(MSR_IA32_PAT, PatVmsr::alloc), (EFER, EferVmsr::alloc)];
+const EMULATED_MSRS: &[EmulatedMsrs] = &[
+    (MSR_IA32_FEATURE_CONTROL, FeatureControlVmsr::alloc),
+    (MSR_IA32_PAT, PatVmsr::alloc),
+    (EFER, EferVmsr::alloc),
+];
 
 struct GuestCpuMsr(Box<dyn MsrEmulation>);
 

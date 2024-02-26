@@ -5,6 +5,7 @@
 // Author: Joerg Roedel <jroedel@suse.de>
 
 use crate::error::SvsmError;
+use bitflags::bitflags;
 use core::arch::asm;
 
 pub const MSR_IA32_FEATURE_CONTROL: u32 = 0x0000_003A;
@@ -54,6 +55,12 @@ pub const PAT_POWER_ON_VALUE: u64 = PAT_MEM_TYPE_WRITE_BACK
     + (PAT_MEM_TYPE_WRITE_THROUGH << 40)
     + (PAT_MEM_TYPE_UNCACHED << 48)
     + (PAT_MEM_TYPE_UNCACHEABLE << 56);
+
+bitflags! {
+    pub struct MsrIa32FeatureControl: u64 {
+        const LOCK          = 1 << 0;
+    }
+}
 
 pub fn read_msr(msr: u32) -> Result<u64, SvsmError> {
     let eax: u32;
