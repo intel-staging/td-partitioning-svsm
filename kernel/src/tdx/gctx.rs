@@ -7,6 +7,7 @@
 use super::percpu::this_vcpu;
 use super::utils::TdpVmId;
 use super::vmcs::Vmcs;
+use super::vmcs_lib::VmcsField64Guest;
 use crate::address::VirtAddr;
 use crate::locking::SpinLock;
 use crate::mm::address_space::virt_to_phys;
@@ -144,6 +145,7 @@ pub struct GuestCpuContext {
     vm_id: TdpVmId,
     tdp_ctx: GuestCpuTdpContext,
     tdp_ctx_pa: u64,
+    ia32_efer: RegCache<u64>,
 }
 
 impl GuestCpuContext {
@@ -152,11 +154,20 @@ impl GuestCpuContext {
         self.tdp_ctx_pa = u64::from(virt_to_phys(VirtAddr::from(core::ptr::addr_of!(
             self.tdp_ctx
         ))));
+        // IA32_EFER is preserved across L2 VM exit & entry, so the
+        // cache in RegCache is always up to date. So no need to provide
+        // a readhw operation.
+        self.ia32_efer = RegCache::new(
+            vm_id,
+            None,
+            Some(|vmcs, v| vmcs.write64(VmcsField64Guest::IA32_EFER, v)),
+        );
     }
 
     pub fn reset(&mut self) {
         self.tdp_ctx = GuestCpuTdpContext::default();
         self.tdp_ctx.rip = REAL_MODE_RIP;
         self.tdp_ctx.rflags = REAL_MODE_RFLAGS;
+        self.ia32_efer.write_cache(0);
     }
 }
