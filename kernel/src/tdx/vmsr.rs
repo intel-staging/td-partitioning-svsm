@@ -8,7 +8,7 @@ extern crate alloc;
 
 use super::error::TdxError;
 use super::msr_bitmap::{InterceptMsrType, MsrBitmap, MsrBitmapRef};
-use super::percpu::this_vcpu;
+use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::tdcall::{tdvmcall_rdmsr, tdvmcall_wrmsr, TdVmcallError};
 use super::utils::TdpVmId;
 use super::vmcs_lib::VmcsField64Guest;
@@ -131,6 +131,30 @@ impl MsrEmulation for PatVmsr {
     }
 }
 
+#[derive(Debug)]
+struct EferVmsr;
+
+impl BoxedMsrEmulation for EferVmsr {
+    fn new(_msr: u32) -> Self {
+        EferVmsr
+    }
+}
+
+impl MsrEmulation for EferVmsr {
+    fn address(&self) -> u32 {
+        EFER
+    }
+
+    fn read(&self, vm_id: TdpVmId) -> Result<u64, TdxError> {
+        Ok(this_vcpu(vm_id).get_ctx().get_efer())
+    }
+
+    fn write(&mut self, vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        this_vcpu_mut(vm_id).get_ctx_mut().set_efer(data);
+        Ok(())
+    }
+}
+
 const PASSTHROUGH_MSRS: &[u32] = &[
     MSR_IA32_SPEC_CTRL,
     MSR_IA32_PRED_CMD,
@@ -153,7 +177,7 @@ const PASSTHROUGH_MSRS: &[u32] = &[
 ];
 
 type EmulatedMsrs = (u32, fn(u32) -> Box<dyn MsrEmulation>);
-const EMULATED_MSRS: &[EmulatedMsrs] = &[(MSR_IA32_PAT, PatVmsr::alloc)];
+const EMULATED_MSRS: &[EmulatedMsrs] = &[(MSR_IA32_PAT, PatVmsr::alloc), (EFER, EferVmsr::alloc)];
 
 struct GuestCpuMsr(Box<dyn MsrEmulation>);
 
