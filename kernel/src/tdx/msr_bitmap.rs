@@ -94,7 +94,6 @@ impl<'a> MsrBitmapRef<'a> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn intercept(&mut self, msr: u32, inttype: InterceptMsrType) -> Result<(), TdxError> {
         let (read_off, write_off) = match Self::msr_offset(msr) {
             Some((r, w)) => (r, w),

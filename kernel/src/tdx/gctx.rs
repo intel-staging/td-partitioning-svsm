@@ -395,6 +395,8 @@ impl GuestCpuContext {
         self.cr
             .set_cr4(0)
             .expect("Failed to reset CR4 to real mode");
+
+        self.msrs.reset();
     }
 
     pub fn get_efer(&self) -> u64 {

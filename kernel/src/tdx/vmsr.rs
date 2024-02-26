@@ -7,8 +7,10 @@
 extern crate alloc;
 
 use super::error::TdxError;
-use super::msr_bitmap::{MsrBitmap, MsrBitmapRef};
+use super::msr_bitmap::{InterceptMsrType, MsrBitmap, MsrBitmapRef};
+use super::tdcall::{tdvmcall_rdmsr, tdvmcall_wrmsr, TdVmcallError};
 use super::utils::TdpVmId;
+use crate::cpu::msr::*;
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 
@@ -52,6 +54,62 @@ impl MsrEmulation for UnsupportedMsr {
     }
 }
 
+#[derive(Debug)]
+struct PassthruMsr(u32);
+
+impl BoxedMsrEmulation for PassthruMsr {
+    fn new(msr: u32) -> Self {
+        PassthruMsr(msr)
+    }
+}
+
+impl MsrEmulation for PassthruMsr {
+    fn address(&self) -> u32 {
+        self.0
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        tdvmcall_rdmsr(self.address()).map_err(|e| {
+            if e != TdVmcallError::VmcallOperandInvalid {
+                panic!("Fatal RDMSR 0x{:x}: error {:?}", self.address(), e);
+            }
+            log::warn!("Illegal RDMSR 0x{:x}: error {:?}", self.address(), e);
+            TdxError::Vmsr
+        })
+    }
+
+    fn write(&mut self, _vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        tdvmcall_wrmsr(self.address(), data).map_err(|e| {
+            if e != TdVmcallError::VmcallOperandInvalid {
+                panic!("Fatal WRMSR 0x{:x}: error {:?}", self.address(), e);
+            }
+            log::warn!("Illegal WRMSR 0x{:x}: error {:?}", self.address(), e);
+            TdxError::Vmsr
+        })
+    }
+}
+
+const PASSTHROUGH_MSRS: &[u32] = &[
+    MSR_IA32_SPEC_CTRL,
+    MSR_IA32_PRED_CMD,
+    MSR_IA32_BIOS_SIGN_ID,
+    MSR_IA32_UMWAIT_CONTROL,
+    MSR_IA32_ARCH_CAPABILITIES,
+    MSR_IA32_SYSENTER_CS,
+    MSR_IA32_SYSENTER_ESP,
+    MSR_IA32_SYSENTER_EIP,
+    MSR_IA32_XFD,
+    MSR_IA32_DEBUGCTL,
+    MSR_IA32_XSS,
+    MSR_IA32_STAR,
+    MSR_IA32_LSTAR,
+    MSR_IA32_FMASK,
+    MSR_IA32_FS_BASE,
+    MSR_IA32_GS_BASE,
+    MSR_IA32_KERNEL_GS_BASE,
+    MSR_IA32_TSC_AUX,
+];
+
 struct GuestCpuMsr(Box<dyn MsrEmulation>);
 
 pub struct GuestCpuMsrs {
@@ -68,7 +126,27 @@ impl GuestCpuMsrs {
         self.bitmap = MsrBitmap::new();
     }
 
-    #[allow(dead_code)]
+    pub fn reset(&mut self) {
+        for &msr in PASSTHROUGH_MSRS.iter() {
+            self.set(msr, PassthruMsr::alloc(msr));
+        }
+
+        let mut bitmap = self.new_bitmap_ref();
+
+        for &msr in PASSTHROUGH_MSRS.iter() {
+            bitmap
+                .intercept(msr, InterceptMsrType::Disable)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "error configuring MSR interception for passthru MSR 0x{:x}",
+                        msr
+                    )
+                });
+        }
+
+        // Unsupported MSRs are intercepted by default
+    }
+
     fn new_bitmap_ref(&mut self) -> MsrBitmapRef<'_> {
         MsrBitmapRef::new(self.vm_id, &mut self.bitmap)
     }
