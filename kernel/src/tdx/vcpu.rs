@@ -19,7 +19,7 @@ use super::vlapic::Vlapic;
 use super::vmcs::Vmcs;
 use super::vmcs_lib::VmcsField32ReadOnly;
 use super::vmexit::VmExit;
-use crate::cpu::idt::common::{GP_VECTOR, UD_VECTOR};
+use crate::cpu::idt::common::{GP_VECTOR, PF_VECTOR, UD_VECTOR};
 use crate::cpu::interrupts::{disable_irq, enable_irq};
 use crate::cpu::lapic::LAPIC;
 use crate::cpu::msr::{write_msr, MSR_IA32_PAT, MSR_IA32_PRED_CMD};
@@ -190,6 +190,11 @@ impl Vcpu {
                                     ErrExcp::UD => self
                                         .queue_exception(UD_VECTOR as u8, 0)
                                         .expect("Failed to inject #UD"),
+                                    ErrExcp::PF(gva, ec) => {
+                                        self.ctx.set_cr2(u64::from(gva)).unwrap();
+                                        self.queue_exception(PF_VECTOR as u8, ec.bits())
+                                            .expect("Failed to inject #PF");
+                                    }
                                 },
                                 _ => self
                                     .queue_exception(GP_VECTOR as u8, 0)

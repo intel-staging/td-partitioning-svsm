@@ -39,6 +39,20 @@ pub const SX_VECTOR: usize = 30;
 
 pub const PF_ERROR_WRITE: usize = 2;
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct PageFaultErrCode :u32 {
+        const P     = 1 << 0;
+        const W     = 1 << 1;
+        const U     = 1 << 2;
+        const R     = 1 << 3;
+        const I     = 1 << 4;
+        const PK    = 1 << 5;
+        const SS    = 1 << 6;
+        const SGX   = 1 << 15;
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ExceptionClass {
     Benign,

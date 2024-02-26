@@ -633,7 +633,6 @@ impl GuestPageTableImmut {
     }
 }
 
-#[allow(dead_code)]
 pub fn gva2gpa(
     ctx: &GuestCpuContext,
     gva: GuestVirtAddr,

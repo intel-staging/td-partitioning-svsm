@@ -8,6 +8,7 @@ pub mod error;
 
 mod gctx;
 mod gmem;
+mod instr_emul;
 mod interrupts;
 mod ioreq;
 mod msr_bitmap;

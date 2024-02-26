@@ -10,14 +10,25 @@ use crate::mm::address_space::is_kernel_phys_addr_valid;
 use crate::mm::guestmem::gpa_is_shared;
 use crate::mm::memory::is_guest_phys_addr_valid;
 
-#[allow(dead_code)]
 #[derive(Copy, Clone, Debug, PartialEq)]
-enum AddrSize {
+pub enum AddrSize {
     ZeroByte,
     OneByte,
     TwoBytes,
     FourBytes = 4,
     EightBytes = 8,
+}
+
+impl AddrSize {
+    pub fn mask(&self) -> u64 {
+        match self {
+            AddrSize::ZeroByte => 0,
+            AddrSize::OneByte => (1 << 8) - 1,
+            AddrSize::TwoBytes => (1 << 16) - 1,
+            AddrSize::FourBytes => (1 << 32) - 1,
+            AddrSize::EightBytes => u64::MAX,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]

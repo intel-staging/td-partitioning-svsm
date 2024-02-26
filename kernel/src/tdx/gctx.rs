@@ -4,6 +4,7 @@
 //
 // Author: Jason CJ Chen <jason.cj.chen@intel.com>
 
+use super::error::TdxError;
 use super::percpu::this_vcpu;
 use super::utils::TdpVmId;
 use super::vcr::GuestCpuCrRegs;
@@ -11,6 +12,7 @@ use super::vmcs::Vmcs;
 use super::vmcs_lib::{VmcsField16Guest, VmcsField32Guest, VmcsField64Guest};
 use super::vmsr::GuestCpuMsrs;
 use crate::address::VirtAddr;
+use crate::cpu::control_regs::CR0Flags;
 use crate::locking::SpinLock;
 use crate::mm::address_space::virt_to_phys;
 use core::default::Default;
@@ -139,11 +141,11 @@ struct GuestCpuTdpContext {
 }
 
 #[derive(Copy, Clone)]
-struct Segment {
-    selector: u16,
-    base: u64,
-    limit: u32,
-    attr: u32,
+pub struct Segment {
+    pub selector: u16,
+    pub base: u64,
+    pub limit: u32,
+    pub attr: u32,
 }
 
 impl Segment {
@@ -164,7 +166,6 @@ struct SegCache {
     attr: RegCache<u32>,
 }
 
-#[allow(dead_code)]
 impl SegCache {
     fn get(&self) -> Segment {
         Segment::new(
@@ -233,6 +234,21 @@ macro_rules! seg_cache {
     };
 }
 
+#[allow(dead_code)]
+#[derive(Copy, Clone, PartialEq)]
+pub enum GuestCpuSegCode {
+    Idtr,
+    Gdtr,
+    Ldtr,
+    CS,
+    DS,
+    ES,
+    FS,
+    GS,
+    SS,
+    TR,
+}
+
 struct GuestCpuSegs {
     idtr: SegCache,
     gdtr: SegCache,
@@ -274,7 +290,7 @@ impl GuestCpuSegs {
     }
 }
 
-#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum GuestCpuGPRegCode {
     Rax,
     Rcx,
@@ -292,6 +308,52 @@ pub enum GuestCpuGPRegCode {
     R13,
     R14,
     R15,
+}
+
+impl TryFrom<u8> for GuestCpuGPRegCode {
+    type Error = TdxError;
+
+    fn try_from(val: u8) -> Result<GuestCpuGPRegCode, Self::Error> {
+        match val {
+            0 => Ok(GuestCpuGPRegCode::Rax),
+            1 => Ok(GuestCpuGPRegCode::Rcx),
+            2 => Ok(GuestCpuGPRegCode::Rdx),
+            3 => Ok(GuestCpuGPRegCode::Rbx),
+            4 => Ok(GuestCpuGPRegCode::Rsp),
+            5 => Ok(GuestCpuGPRegCode::Rbp),
+            6 => Ok(GuestCpuGPRegCode::Rsi),
+            7 => Ok(GuestCpuGPRegCode::Rdi),
+            8 => Ok(GuestCpuGPRegCode::R8),
+            9 => Ok(GuestCpuGPRegCode::R9),
+            10 => Ok(GuestCpuGPRegCode::R10),
+            11 => Ok(GuestCpuGPRegCode::R11),
+            12 => Ok(GuestCpuGPRegCode::R12),
+            13 => Ok(GuestCpuGPRegCode::R13),
+            14 => Ok(GuestCpuGPRegCode::R14),
+            15 => Ok(GuestCpuGPRegCode::R15),
+            _ => Err(TdxError::InvalidGPRegCode),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum GuestCpuRegCode {
+    GP(GuestCpuGPRegCode),
+    Rip,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum GuestCpuMode {
+    Real,
+    Protected,
+    Compatibility,
+    Bit64,
+}
+
+impl GuestCpuMode {
+    pub fn is_bit64(&self) -> bool {
+        matches!(self, GuestCpuMode::Bit64)
+    }
 }
 
 const REAL_MODE_RIP: u64 = 0xfff0;
@@ -429,6 +491,10 @@ impl GuestCpuContext {
         self.cr.get_cr0()
     }
 
+    pub fn set_cr2(&mut self, val: u64) -> Result<(), TdxError> {
+        self.cr.set_cr2(val)
+    }
+
     pub fn get_cr3(&self) -> u64 {
         self.cr.get_cr3()
     }
@@ -505,6 +571,38 @@ impl GuestCpuContext {
             GuestCpuGPRegCode::R13 => self.tdp_ctx.gpregs.r13 = val,
             GuestCpuGPRegCode::R14 => self.tdp_ctx.gpregs.r14 = val,
             GuestCpuGPRegCode::R15 => self.tdp_ctx.gpregs.r15 = val,
+        }
+    }
+
+    pub fn get_seg(&self, seg: GuestCpuSegCode) -> Segment {
+        match seg {
+            GuestCpuSegCode::Idtr => self.segs.idtr.get(),
+            GuestCpuSegCode::Gdtr => self.segs.gdtr.get(),
+            GuestCpuSegCode::Ldtr => self.segs.ldtr.get(),
+            GuestCpuSegCode::CS => self.segs.cs.get(),
+            GuestCpuSegCode::DS => self.segs.ds.get(),
+            GuestCpuSegCode::ES => self.segs.es.get(),
+            GuestCpuSegCode::FS => self.segs.fs.get(),
+            GuestCpuSegCode::GS => self.segs.gs.get(),
+            GuestCpuSegCode::SS => self.segs.ss.get(),
+            GuestCpuSegCode::TR => self.segs.tr.get(),
+        }
+    }
+
+    pub fn get_cpu_mode(&self) -> GuestCpuMode {
+        if (self.get_efer() & 0x400) != 0 {
+            /* EFER.LMA = 1 */
+            if (self.segs.cs.attr.read_cache() & 0x2000) != 0 {
+                // CS.L = 1 represents 64bit mode.
+                GuestCpuMode::Bit64
+            } else {
+                GuestCpuMode::Compatibility
+            }
+        } else if (self.get_cr0() & CR0Flags::PE.bits()) != 0 {
+            /* CR0.PE = 1 */
+            GuestCpuMode::Protected
+        } else {
+            GuestCpuMode::Real
         }
     }
 

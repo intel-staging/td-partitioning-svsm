@@ -23,7 +23,6 @@ bitflags! {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum OpType {
     #[default]
@@ -50,7 +49,6 @@ pub struct OpDesc {
     pub opflags: OpFlags,
 }
 
-#[allow(dead_code)]
 impl OpDesc {
     pub fn one_byte(opcode: u8) -> Result<Self, OpCodeError> {
         let mut opdesc = OpDesc {

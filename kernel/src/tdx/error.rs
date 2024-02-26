@@ -5,10 +5,13 @@
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
 use super::ioreq::IoType;
+use crate::address::GuestVirtAddr;
+use crate::cpu::idt::common::PageFaultErrCode;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ErrExcp {
     GP(u32),
+    PF(GuestVirtAddr, PageFaultErrCode),
     UD,
 }
 
@@ -24,6 +27,8 @@ pub enum TdxError {
     GuestPGT,
     // Require to inject exception to Guest
     InjectExcp(ErrExcp),
+    // Invalid code to translate to GuestCpuGPReg
+    InvalidGPRegCode,
     // Invalid vector
     InvalidVector,
     // Invalid vm id
