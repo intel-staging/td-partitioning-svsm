@@ -5,9 +5,12 @@
 // Author: Joerg Roedel <jroedel@suse.de>
 
 use crate::address::{Address, GuestPhysAddr, VirtAddr};
+use crate::cpu::features::cpu_type;
 use crate::error::SvsmError;
 use crate::mm::memory::is_guest_phys_addr_valid;
+use crate::mm::pagetable::encrypt_mask;
 use crate::mm::ptguards::PerCPUPageMappingGuard;
+use crate::types::CpuType;
 use core::arch::asm;
 use core::marker::PhantomData;
 use core::mem::{size_of, MaybeUninit};
@@ -282,6 +285,18 @@ impl<T: Sized + Copy> GuestMemMap<T> {
             })
         }
     }
+}
+
+pub fn gpa_is_shared(gpa: GuestPhysAddr) -> bool {
+    // GuestPhysAddr and PhysAddr are using the same bit as encryption-bit mask
+    match cpu_type() {
+        CpuType::Sev => (gpa.bits() & encrypt_mask()) == 0,
+        CpuType::Td => (gpa.bits() & encrypt_mask()) != 0,
+    }
+}
+
+pub fn gpa_strip_c_bit(gpa: GuestPhysAddr) -> GuestPhysAddr {
+    GuestPhysAddr::from(gpa.bits() & !encrypt_mask())
 }
 
 #[cfg(test)]
