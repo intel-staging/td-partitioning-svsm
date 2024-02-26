@@ -58,6 +58,91 @@ impl MsrEmulation for UnsupportedMsr {
 }
 
 #[derive(Debug)]
+struct ZeroedRoMsr(u32);
+
+impl BoxedMsrEmulation for ZeroedRoMsr {
+    fn new(msr: u32) -> Self {
+        ZeroedRoMsr(msr)
+    }
+}
+
+impl MsrEmulation for ZeroedRoMsr {
+    fn address(&self) -> u32 {
+        self.0
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        Ok(0)
+    }
+}
+
+#[derive(Debug)]
+struct IgnoredWoMsr(u32);
+
+impl BoxedMsrEmulation for IgnoredWoMsr {
+    fn new(msr: u32) -> Self {
+        IgnoredWoMsr(msr)
+    }
+}
+
+impl MsrEmulation for IgnoredWoMsr {
+    fn address(&self) -> u32 {
+        self.0
+    }
+
+    fn write(&mut self, _vm_id: TdpVmId, _data: u64) -> Result<(), TdxError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct IgnoredRwMsr(u32);
+
+impl BoxedMsrEmulation for IgnoredRwMsr {
+    fn new(msr: u32) -> Self {
+        IgnoredRwMsr(msr)
+    }
+}
+
+impl MsrEmulation for IgnoredRwMsr {
+    fn address(&self) -> u32 {
+        self.0
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        Ok(0)
+    }
+
+    fn write(&mut self, _vm_id: TdpVmId, _data: u64) -> Result<(), TdxError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct NoopMsr(u32, u64); // (msr, data)
+
+impl BoxedMsrEmulation for NoopMsr {
+    fn new(msr: u32) -> Self {
+        NoopMsr(msr, 0)
+    }
+}
+
+impl MsrEmulation for NoopMsr {
+    fn address(&self) -> u32 {
+        self.0
+    }
+
+    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
+        Ok(self.1)
+    }
+
+    fn write(&mut self, _vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        self.1 = data;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
 struct PassthruMsr(u32);
 
 impl BoxedMsrEmulation for PassthruMsr {
@@ -198,9 +283,17 @@ const PASSTHROUGH_MSRS: &[u32] = &[
 
 type EmulatedMsrs = (u32, fn(u32) -> Box<dyn MsrEmulation>);
 const EMULATED_MSRS: &[EmulatedMsrs] = &[
+    (MSR_IA32_PLATFORM_ID, ZeroedRoMsr::alloc),
+    (MSR_SMI_COUNT, ZeroedRoMsr::alloc),
     (MSR_IA32_FEATURE_CONTROL, FeatureControlVmsr::alloc),
+    (MSR_IA32_BIOS_UPDT_TRIG, IgnoredWoMsr::alloc),
+    (MSR_PLATFORM_INFO, ZeroedRoMsr::alloc),
+    (MSR_MISC_FEATURE_ENABLES, ZeroedRoMsr::alloc),
+    (MSR_IA32_MCG_CAP, ZeroedRoMsr::alloc),
+    (MSR_IA32_PERF_CTL, NoopMsr::alloc),
     (MSR_IA32_PAT, PatVmsr::alloc),
     (EFER, EferVmsr::alloc),
+    (MSR_IA32_CSTAR, IgnoredRwMsr::alloc),
 ];
 
 struct GuestCpuMsr(Box<dyn MsrEmulation>);
