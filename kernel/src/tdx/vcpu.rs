@@ -374,6 +374,10 @@ impl Vcpu {
             .queue_exception(vec, err_code)
             .map(|req| self.cb.make_request(req))
     }
+
+    pub fn has_pending_events(&self) -> bool {
+        !self.cb.is_request_empty() || self.vlapic.has_pending_intr()
+    }
 }
 
 pub fn kick_vcpu(apic_id: u32) {

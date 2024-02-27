@@ -27,7 +27,6 @@ pub struct VcpuCommBlock {
     pending_req: AtomicU64,
 }
 
-#[allow(dead_code)]
 impl VcpuCommBlock {
     pub fn new(apic_id: u32) -> Self {
         Self {

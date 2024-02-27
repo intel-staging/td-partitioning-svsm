@@ -1150,6 +1150,10 @@ impl Vlapic {
         }
     }
 
+    pub fn has_pending_intr(&self) -> bool {
+        self.find_highest_irr() != 0
+    }
+
     pub fn mmio_range(&self) -> (u64, u64) {
         let base = self.get_apicbase() & !((PAGE_SIZE - 1) as u64);
         (base, base + (PAGE_SIZE as u64))

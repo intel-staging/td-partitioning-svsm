@@ -9,12 +9,14 @@ use super::gctx::GuestCpuGPRegCode;
 use super::gmem::accept_guest_mem;
 use super::ioreq::{IoDirection, IoReq, IoType};
 use super::percpu::{this_vcpu, this_vcpu_mut};
+use super::tdcall::tdvmcall_sti_halt;
 use super::tdp::this_tdp;
 use super::utils::{td_add_page_alias, GPAAttr, L2ExitInfo, TdpVmId};
 use super::vcpu_comm::VcpuReqFlags;
 use super::vmcs_lib::{VMX_INT_INFO_ERR_CODE_VALID, VMX_INT_INFO_VALID};
 use crate::address::{Address, GuestPhysAddr};
 use crate::cpu::idt::common::triple_fault;
+use crate::cpu::interrupts::{disable_irq, enable_irq};
 use crate::mm::address_space::is_kernel_phys_addr_valid;
 use crate::mm::guestmem::{gpa_is_shared, gpa_strip_c_bit};
 use crate::mm::memory::is_guest_phys_addr_valid;
@@ -45,6 +47,7 @@ pub enum VmExitReason {
     InitSignal,
     InterruptWindow,
     Cpuid,
+    Hlt,
     IoInstruction {
         size: usize,
         read: bool,
@@ -73,6 +76,7 @@ impl VmExitReason {
             3 => VmExitReason::InitSignal,
             7 => VmExitReason::InterruptWindow,
             10 => VmExitReason::Cpuid,
+            12 => VmExitReason::Hlt,
             30 => VmExitReason::IoInstruction {
                 size: ((l2exit_info.exit_qual & 0x7) + 1) as usize,
                 read: (l2exit_info.exit_qual & 0x8) != 0,
@@ -167,6 +171,15 @@ impl VmExit {
         ctx.set_gpreg(GuestCpuGPRegCode::Rcx, vcpuid.ecx as u64);
         ctx.set_gpreg(GuestCpuGPRegCode::Rdx, vcpuid.edx as u64);
 
+        self.skip_instruction();
+    }
+
+    fn handle_hlt(&self) {
+        disable_irq();
+        if !this_vcpu(self.vm_id).has_pending_events() {
+            tdvmcall_sti_halt();
+        }
+        enable_irq();
         self.skip_instruction();
     }
 
@@ -313,6 +326,7 @@ impl VmExit {
             VmExitReason::InitSignal => self.handle_init_signal(),
             VmExitReason::InterruptWindow => self.handle_interrupt_window(),
             VmExitReason::Cpuid => self.handle_cpuid(),
+            VmExitReason::Hlt => self.handle_hlt(),
             VmExitReason::IoInstruction {
                 size,
                 read,
