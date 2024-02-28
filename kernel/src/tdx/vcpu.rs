@@ -309,6 +309,9 @@ impl Vcpu {
                 // NMI not injected, set the INJ_NMI request again.
                 self.cb.make_request(VcpuReqFlags::INJ_NMI);
             }
+        } else {
+            // Handle pending vector injection after exception/NMI.
+            self.virq.inject_pending_idt();
         }
 
         // Handle interrupt event after nmi/exceptions

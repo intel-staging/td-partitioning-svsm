@@ -34,6 +34,7 @@ pub struct Virq {
     vm_id: TdpVmId,
     injected: bool,
     excep_info: Option<ExceptionInfo>,
+    pending_idt: Option<u32>,
 }
 
 impl Virq {
@@ -209,10 +210,26 @@ impl Virq {
             } else if event_type == VMX_INT_TYPE_NMI {
                 Ok(Some(VcpuReqFlags::INJ_NMI))
             } else {
+                self.pending_idt = Some(idt_vec_info);
                 Ok(None)
             }
         } else {
             Ok(None)
+        }
+    }
+
+    pub fn inject_pending_idt(&mut self) {
+        if self.injected {
+            return;
+        }
+
+        if let Some(idt_vec_info) = self.pending_idt.take() {
+            if (idt_vec_info & VMX_INT_INFO_VALID) != 0 {
+                this_vcpu(self.vm_id)
+                    .get_vmcs()
+                    .write32(VmcsField32Control::VM_ENTRY_INTR_INFO_FIELD, idt_vec_info);
+                self.injected = true;
+            }
         }
     }
 }
