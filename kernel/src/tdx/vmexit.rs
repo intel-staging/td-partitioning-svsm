@@ -5,12 +5,15 @@
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
 use super::error::{ErrExcp, TdxError};
-use super::utils::L2ExitInfo;
+use super::percpu::this_vcpu;
+use super::utils::{L2ExitInfo, TdpVmId};
+use super::vcpu_comm::VcpuReqFlags;
 
 #[derive(Copy, Clone, Debug)]
 pub enum VmExitReason {
     ExternalInterrupt,
     InitSignal,
+    InterruptWindow,
     UnSupported(u32),
 }
 
@@ -20,19 +23,21 @@ impl VmExitReason {
         match exit_reason {
             1 => VmExitReason::ExternalInterrupt,
             3 => VmExitReason::InitSignal,
+            7 => VmExitReason::InterruptWindow,
             _ => VmExitReason::UnSupported(exit_reason),
         }
     }
 }
 
 pub struct VmExit {
+    vm_id: TdpVmId,
     pub reason: VmExitReason,
 }
 
 impl VmExit {
-    pub fn new(l2exit_info: L2ExitInfo) -> Self {
+    pub fn new(vm_id: TdpVmId, l2exit_info: L2ExitInfo) -> Self {
         let reason = VmExitReason::new(&l2exit_info);
-        VmExit { reason }
+        VmExit { vm_id, reason }
     }
 
     fn handle_external_interrupt(&self) {
@@ -52,10 +57,17 @@ impl VmExit {
         // So, it is safe to ignore the signal.
     }
 
+    fn handle_interrupt_window(&self) {
+        this_vcpu(self.vm_id)
+            .get_cb()
+            .make_request(VcpuReqFlags::DIS_IRQWIN);
+    }
+
     pub fn handle_vmexits(&self) -> Result<(), TdxError> {
         match self.reason {
             VmExitReason::ExternalInterrupt => self.handle_external_interrupt(),
             VmExitReason::InitSignal => self.handle_init_signal(),
+            VmExitReason::InterruptWindow => self.handle_interrupt_window(),
             VmExitReason::UnSupported(v) => {
                 log::error!("UnSupported VmExit Reason {}", v);
                 return Err(TdxError::InjectExcp(ErrExcp::UD));

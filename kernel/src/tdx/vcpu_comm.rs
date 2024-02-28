@@ -17,6 +17,7 @@ bitflags! {
         const REQ_EVENT         = 1 << 4;
         const INJ_EXCP          = 1 << 5;
         const TRPFAULT          = 1 << 6;
+        const DIS_IRQWIN        = 1 << 7;
     }
 }
 

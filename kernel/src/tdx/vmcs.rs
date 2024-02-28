@@ -299,6 +299,18 @@ impl Vmcs {
             self.proc_vm_exec_ctrls,
         );
     }
+
+    pub fn disable_irq_window(&mut self) {
+        if (self.proc_vm_exec_ctrls & PrimaryVmExecControls::INTR_WINDOW_EXITING.bits()) == 0 {
+            return;
+        }
+
+        self.proc_vm_exec_ctrls &= !(PrimaryVmExecControls::INTR_WINDOW_EXITING.bits());
+        self.write32(
+            VmcsField32Control::PROC_BASED_VM_EXEC_CONTROL,
+            self.proc_vm_exec_ctrls,
+        );
+    }
 }
 
 struct VmCtrlCheck32 {

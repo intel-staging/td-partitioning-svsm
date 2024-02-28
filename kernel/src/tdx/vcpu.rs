@@ -174,7 +174,7 @@ impl Vcpu {
                             Ok(None) => {}
                         }
 
-                        let vmexit = VmExit::new(l2exit_info);
+                        let vmexit = VmExit::new(self.vm_id, l2exit_info);
                         if let Err(e) = vmexit.handle_vmexits() {
                             log::error!(
                                 "vcpu{} handle vmexit {:x?} failed: {:x?}",
@@ -320,8 +320,14 @@ impl Vcpu {
         }
 
         if self.cb.has_request(VcpuReqFlags::INJ_NMI) || self.vlapic.has_pending_delivery_intr() {
+            // Clear the DIS_IRQWIN request as irq window should be enabled
+            self.cb.clear_request(VcpuReqFlags::DIS_IRQWIN);
             // Enable IRQ windown if there is pending event not injected
             self.vmcs.enable_irq_window();
+        } else if self.cb.test_and_clear_request(VcpuReqFlags::DIS_IRQWIN) {
+            // Disable irq window if the window is opened and there is no
+            // pending events to inject
+            self.vmcs.disable_irq_window();
         }
 
         Ok(())
