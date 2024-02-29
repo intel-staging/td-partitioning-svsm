@@ -4,7 +4,7 @@
 //
 // Author: Joerg Roedel <jroedel@suse.de>
 
-use super::cpuid::{cpuid, Cpuid01Edx, Cpuid80000001Edx};
+use super::cpuid::{cpuid, Cpuid01Ecx, Cpuid01Edx, Cpuid80000001Edx};
 use crate::types::CpuType;
 use lazy_static::lazy_static;
 
@@ -12,8 +12,10 @@ use lazy_static::lazy_static;
 pub const X86_FEATURE_PGE: u32 = Cpuid01Edx::PGE.bits().trailing_zeros();
 // CPUID level 0x80000001 (EDX), word 1
 pub const X86_FEATURE_NX: u32 = 32 + Cpuid80000001Edx::NX.bits().trailing_zeros();
+// CPUID level 0x00000001 (ECX), word 2
+pub const X86_FEATURE_X2APIC: u32 = 2 * 32 + Cpuid01Ecx::X2APIC.bits().trailing_zeros();
 
-const FEATURE_WORDS: usize = 2;
+const FEATURE_WORDS: usize = 3;
 
 struct X86Features {
     word: [u32; FEATURE_WORDS],
@@ -28,6 +30,8 @@ impl X86Features {
         // Word 1 contains CPUID level 0x80000001 EDX
         let cpuid80000001 = cpuid(0x80000001).unwrap();
         word[1] = cpuid80000001.edx;
+        // Word 2 contains CPUID level 0x00000001 ECX
+        word[2] = cpuid01.ecx;
 
         X86Features { word }
     }

@@ -112,6 +112,42 @@ pub fn dump_cpuid_table() {
 
 bitflags! {
     #[derive(Copy, Clone, Debug)]
+    pub struct Cpuid01Ecx: u32 {
+        const SSE3          = 1 << 0;
+        const PCLMULQDQ     = 1 << 1;
+        const DTES64        = 1 << 2;
+        const MONITOR       = 1 << 3;
+        const DS_CPL        = 1 << 4;
+        const VMX           = 1 << 5;
+        const SMX           = 1 << 6;
+        const EIST          = 1 << 7;
+        const TM2           = 1 << 8;
+        const SSSE3         = 1 << 9;
+        const CNXT_ID       = 1 << 10;
+        const SDBG          = 1 << 11;
+        const FMA           = 1 << 12;
+        const CMPXCHG16B    = 1 << 13;
+        const XTPRUC        = 1 << 14;
+        const PDCM          = 1 << 15;
+        const PCID          = 1 << 17;
+        const DCA           = 1 << 18;
+        const SSE4_1        = 1 << 19;
+        const SSE4_2        = 1 << 20;
+        const X2APIC        = 1 << 21;
+        const MOVBE         = 1 << 22;
+        const POPCNT        = 1 << 23;
+        const TSC_DEADLINE  = 1 << 24;
+        const AESNI         = 1 << 25;
+        const XSAVE         = 1 << 26;
+        const OSXSAVE       = 1 << 27;
+        const AVX           = 1 << 28;
+        const F16C          = 1 << 29;
+        const RDRAND        = 1 << 30;
+    }
+}
+
+bitflags! {
+    #[derive(Copy, Clone, Debug)]
     pub struct Cpuid01Edx: u32 {
         const FPU       = 1 << 0;
         const VME       = 1 << 1;
