@@ -10,6 +10,8 @@ use super::tdp::init_tdps;
 use super::utils::{tdvps_l2_ctls, L2CtlsFlags, TdpVmId, MAX_NUM_L2_VMS};
 use super::vcpu::Vcpu;
 use crate::address::VirtAddr;
+use crate::cpu::interrupts::enable_irq;
+use crate::cpu::lapic::LAPIC;
 use crate::cpu::percpu::PerCpuArch;
 use crate::error::SvsmError;
 use crate::mm::alloc::{allocate_pages, get_order};
@@ -56,6 +58,9 @@ impl PerCpuArch for TdPerCpu {
         if self.is_bsp {
             init_tdps(self.apic_id).map_err(SvsmError::Tdx)?;
         }
+
+        (*LAPIC).init();
+        enable_irq();
 
         Ok(())
     }
