@@ -6,7 +6,7 @@
 //  Chuanxiao Dong <chuanxiao.dong@intel.com>
 //  Jason CJ Chen <jason.cj.chen@intel.com>
 
-use super::interrupts::register_interrupt_handlers;
+use super::interrupts::{register_interrupt_handlers, TIMER_VECTOR};
 use super::tdp::init_tdps;
 use super::utils::{tdvps_l2_ctls, L2CtlsFlags, TdpVmId, MAX_NUM_L2_VMS};
 use super::vcpu::Vcpu;
@@ -14,7 +14,7 @@ use crate::address::{Address, VirtAddr};
 use crate::cpu::control_regs::{read_cr4, write_cr4, CR4Flags};
 use crate::cpu::features::{cpu_has_feature, X86_FEATURE_XSAVE};
 use crate::cpu::interrupts::enable_irq;
-use crate::cpu::lapic::LAPIC;
+use crate::cpu::lapic::{LvtTimerMode, LAPIC};
 use crate::cpu::percpu::{this_cpu, PerCpuArch};
 use crate::error::SvsmError;
 use crate::mm::alloc::{allocate_pages, get_order};
@@ -68,6 +68,7 @@ impl PerCpuArch for TdPerCpu {
         }
 
         (*LAPIC).init();
+        (*LAPIC).setup_lvt_timer(LvtTimerMode::TscDeadline, TIMER_VECTOR);
         enable_irq();
 
         Ok(())
