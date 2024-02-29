@@ -9,12 +9,12 @@
 use super::tdp::init_tdps;
 use super::utils::{tdvps_l2_ctls, L2CtlsFlags, TdpVmId, MAX_NUM_L2_VMS};
 use super::vcpu::Vcpu;
-use crate::address::VirtAddr;
+use crate::address::{Address, VirtAddr};
 use crate::cpu::control_regs::{read_cr4, write_cr4, CR4Flags};
 use crate::cpu::features::{cpu_has_feature, X86_FEATURE_XSAVE};
 use crate::cpu::interrupts::enable_irq;
 use crate::cpu::lapic::LAPIC;
-use crate::cpu::percpu::PerCpuArch;
+use crate::cpu::percpu::{this_cpu, PerCpuArch};
 use crate::error::SvsmError;
 use crate::mm::alloc::{allocate_pages, get_order};
 use crate::types::PAGE_SIZE;
@@ -102,4 +102,32 @@ impl TdPerCpu {
         tdpvp.init(vm_id, self.apic_id, self.is_bsp);
         tdpvp.run();
     }
+}
+
+#[allow(dead_code)]
+pub fn this_vcpu(vm_id: TdpVmId) -> &'static Vcpu {
+    if let Some(td_percpu) = this_cpu().arch.as_any().downcast_ref::<TdPerCpu>() {
+        if let Some(vaddr) = td_percpu.tdpvps[vm_id.index()].get() {
+            if !vaddr.is_null() {
+                let tdpvp = unsafe { &*vaddr.as_ptr::<TdpVp>().cast::<TdpVp>() };
+                return &tdpvp.vcpu;
+            }
+        }
+    }
+
+    panic!("TDX: NO vcpu found for VM{:?}", vm_id)
+}
+
+#[allow(dead_code)]
+pub fn this_vcpu_mut(vm_id: TdpVmId) -> &'static mut Vcpu {
+    if let Some(td_percpu) = this_cpu().arch.as_any().downcast_ref::<TdPerCpu>() {
+        if let Some(vaddr) = td_percpu.tdpvps[vm_id.index()].get() {
+            if !vaddr.is_null() {
+                let tdpvp = unsafe { &mut *vaddr.as_mut_ptr::<TdpVp>().cast::<TdpVp>() };
+                return &mut tdpvp.vcpu;
+            }
+        }
+    }
+
+    panic!("TDX: NO vcpu found for VM{:?}", vm_id)
 }
