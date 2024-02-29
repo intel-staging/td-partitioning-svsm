@@ -10,6 +10,8 @@ use super::tdp::init_tdps;
 use super::utils::{tdvps_l2_ctls, L2CtlsFlags, TdpVmId, MAX_NUM_L2_VMS};
 use super::vcpu::Vcpu;
 use crate::address::VirtAddr;
+use crate::cpu::control_regs::{read_cr4, write_cr4, CR4Flags};
+use crate::cpu::features::{cpu_has_feature, X86_FEATURE_XSAVE};
 use crate::cpu::interrupts::enable_irq;
 use crate::cpu::lapic::LAPIC;
 use crate::cpu::percpu::PerCpuArch;
@@ -57,6 +59,10 @@ impl PerCpuArch for TdPerCpu {
         // Setup TD environment on BSP only
         if self.is_bsp {
             init_tdps(self.apic_id).map_err(SvsmError::Tdx)?;
+        }
+
+        if cpu_has_feature(X86_FEATURE_XSAVE) {
+            write_cr4(read_cr4() | CR4Flags::OSXSAVE);
         }
 
         (*LAPIC).init();
