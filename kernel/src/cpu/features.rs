@@ -14,6 +14,7 @@ pub const X86_FEATURE_PGE: u32 = Cpuid01Edx::PGE.bits().trailing_zeros();
 pub const X86_FEATURE_NX: u32 = 32 + Cpuid80000001Edx::NX.bits().trailing_zeros();
 // CPUID level 0x00000001 (ECX), word 2
 pub const X86_FEATURE_X2APIC: u32 = 2 * 32 + Cpuid01Ecx::X2APIC.bits().trailing_zeros();
+pub const X86_FEATURE_XSAVE: u32 = 2 * 32 + Cpuid01Ecx::XSAVE.bits().trailing_zeros();
 // CPUID level 0x00000007:0 (EBX), word 3
 pub const X86_FEATURE_INVPCID: u32 = 3 * 32 + Cpuid07_0Ebx::INVPCID.bits().trailing_zeros();
 
