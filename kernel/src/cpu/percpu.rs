@@ -6,6 +6,7 @@
 
 extern crate alloc;
 
+use super::features::cpu_type;
 use super::gdt_mut;
 use super::tss::{X86Tss, IST_DF};
 use crate::address::{Address, PhysAddr, VirtAddr};
@@ -30,7 +31,10 @@ use crate::sev::vmsa::allocate_new_vmsa;
 use crate::task::{
     schedule, schedule_task, RunQueue, Task, TaskPointer, WaitQueue, TASK_FLAG_SHARE_PT,
 };
-use crate::types::{PAGE_SHIFT, PAGE_SHIFT_2M, PAGE_SIZE, PAGE_SIZE_2M, SVSM_TR_FLAGS, SVSM_TSS};
+use crate::tdx::TdPerCpu;
+use crate::types::{
+    CpuType, PAGE_SHIFT, PAGE_SHIFT_2M, PAGE_SIZE, PAGE_SIZE_2M, SVSM_TR_FLAGS, SVSM_TSS,
+};
 use crate::utils::MemoryRegion;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -331,7 +335,10 @@ impl PerCpu {
             let percpu_shared = shared_vaddr.as_mut_ptr::<PerCpuShared>();
             (*percpu_shared) = PerCpuShared::new();
 
-            let arch = Arc::new(GeneralPerCpuArch);
+            let arch: Arc<dyn PerCpuArch> = match cpu_type() {
+                CpuType::Td => Arc::new(TdPerCpu::new(apic_id, apic_id == 0)),
+                CpuType::Sev => Arc::new(GeneralPerCpuArch),
+            };
 
             let percpu = vaddr.as_mut_ptr::<PerCpu>();
 
