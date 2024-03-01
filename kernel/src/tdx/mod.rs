@@ -4,7 +4,8 @@
 //
 // Author: Jason CJ Chen <jason.cj.chen@intel.com>
 
-mod error;
+pub mod error;
+
 mod percpu;
 mod tdcall;
 mod tdp;

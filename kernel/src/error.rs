@@ -12,6 +12,7 @@ use crate::sev::ghcb::GhcbError;
 use crate::sev::msr_protocol::GhcbMsrError;
 use crate::sev::SevSnpError;
 use crate::task::TaskError;
+use crate::tdx::error::TdxError;
 
 // As a general rule, functions private to a given module may use the
 // leaf error types. Public functions should return an SvsmError
@@ -50,4 +51,6 @@ pub enum SvsmError {
     Task(TaskError),
     // Errors from #VC handler
     Vc(VcError),
+    // Errors related to TDX
+    Tdx(TdxError),
 }

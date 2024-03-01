@@ -38,7 +38,6 @@ impl Tdp {
     }
 }
 
-#[allow(dead_code)]
 pub fn init_tdps(apic_id: u32) -> Result<(), TdxError> {
     let tdps = {
         let mut tdps: [MaybeUninit<OnceCell<Tdp>>; MAX_NUM_L2_VMS] =

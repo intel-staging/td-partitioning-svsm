@@ -4,7 +4,9 @@
 //
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
+use super::tdp::init_tdps;
 use crate::cpu::percpu::PerCpuArch;
+use crate::error::SvsmError;
 use core::any::Any;
 
 #[derive(Clone, Copy, Debug)]
@@ -19,6 +21,15 @@ unsafe impl Sync for TdPerCpu {}
 impl PerCpuArch for TdPerCpu {
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn setup_on_cpu(&self) -> Result<(), SvsmError> {
+        // Setup TD environment on BSP only
+        if self.is_bsp {
+            init_tdps(self.apic_id).map_err(SvsmError::Tdx)?;
+        }
+
+        Ok(())
     }
 }
 
