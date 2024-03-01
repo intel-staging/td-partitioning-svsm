@@ -9,6 +9,7 @@ extern crate alloc;
 use super::gctx::GuestCpuContext;
 use super::interrupts::VCPU_KICK_VECTOR;
 use super::tdcall::tdvmcall_sti_halt;
+use super::tdp::this_tdp;
 use super::utils::{td_flush_vpid_global, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet};
 use super::vcpu_comm::{VcpuCommBlock, VcpuReqFlags};
 use super::vlapic::Vlapic;
@@ -74,6 +75,7 @@ impl Vcpu {
         self.ctx.init(vm_id);
         self.vlapic.init(vm_id, apic_id, is_bsp);
         let cb = Arc::new(VcpuCommBlock::new(apic_id));
+        this_tdp(vm_id).register_vcpu_cb(cb.clone());
         unsafe { core::ptr::write(core::ptr::addr_of_mut!(self.cb), cb) };
     }
 

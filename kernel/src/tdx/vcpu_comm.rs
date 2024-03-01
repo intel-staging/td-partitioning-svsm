@@ -14,10 +14,9 @@ bitflags! {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct VcpuCommBlock {
-    apic_id: u32,
+    pub apic_id: u32,
     pending_req: AtomicU64,
 }
 
