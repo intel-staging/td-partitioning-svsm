@@ -4,8 +4,12 @@
 //
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
+use super::tdp::get_vcpu_cb;
+use super::utils::{TdpVmId, FIRST_VM_ID};
+use super::vcpu_comm::VcpuReqFlags;
 use crate::cpu::idt::common::X86ExceptionContext;
 use crate::cpu::interrupts::register_interrupt_handler;
+use crate::cpu::lapic::LAPIC;
 use crate::error::SvsmError;
 
 const FIXED_VECTOR_START: u8 = 0xE0;
@@ -18,7 +22,13 @@ fn handle_vcpu_kick(_ctx: &X86ExceptionContext) {
 }
 
 fn handle_timer(_ctx: &X86ExceptionContext) {
-    //TODO: handle timer interrupts
+    // Currently only support running one single TDP guest so always
+    // assumes the timer interrupts are for TDP vlapic to emulate
+    // timer.
+    let vm_id = TdpVmId::new(FIRST_VM_ID).unwrap();
+    if let Some(cb) = get_vcpu_cb(vm_id, LAPIC.id()) {
+        cb.make_request(VcpuReqFlags::VTIMER);
+    }
 }
 
 pub fn register_interrupt_handlers() -> Result<(), SvsmError> {

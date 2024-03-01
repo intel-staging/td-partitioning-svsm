@@ -116,7 +116,6 @@ pub fn this_tdp(vm_id: TdpVmId) -> &'static Tdp {
     TDPS[vm_id.index()].get().unwrap()
 }
 
-#[allow(dead_code)]
 pub fn get_vcpu_cb(vm_id: TdpVmId, apic_id: u32) -> Option<Arc<VcpuCommBlock>> {
     TDPCBS[vm_id.index()]
         .get()

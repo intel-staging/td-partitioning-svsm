@@ -104,6 +104,8 @@ const APIC_LVT_TM: u32 = 0x00008000;
 const APIC_LVT_M: u32 = 0x00010000;
 
 // fields in LVT Timer
+const APIC_LVTT_VECTOR: u32 = 0x000000ff;
+const APIC_LVTT_M: u32 = 0x00010000;
 const APIC_LVTT_TM: u32 = 0x00060000;
 const APIC_LVTT_TM_PERIODIC: u32 = 0x00020000;
 const APIC_LVTT_TM_TSCDLT: u32 = 0x00040000;
@@ -648,6 +650,10 @@ impl Vlapic {
         self.get_reg(APIC_OFFSET_TIMER_LVT) & APIC_LVTT_TM == APIC_LVTT_TM_PERIODIC
     }
 
+    fn lvtt_masked(&self) -> bool {
+        self.get_reg(APIC_OFFSET_TIMER_LVT) & APIC_LVTT_M != 0
+    }
+
     fn set_expiration(&mut self) -> bool {
         let tmicr = self.vtimer.tmicr;
         let divisor_shift = self.vtimer.divisor_shift;
@@ -1003,6 +1009,21 @@ impl Vlapic {
                 self.update_timer(0, 0);
                 stop_tsc_deadline_timer();
             }
+        }
+    }
+
+    pub fn handle_expired_timer(&mut self) {
+        // inject vcpu timer interrupt if not masked
+        if !self.lvtt_masked() {
+            self.set_intr(
+                (self.get_reg(APIC_OFFSET_TIMER_LVT) & APIC_LVTT_VECTOR) as u8,
+                false,
+            );
+        }
+
+        // restart timer if it is period
+        if self.lvtt_is_period() && self.set_expiration() {
+            start_tsc_deadline_timer(self.vtimer.timeout);
         }
     }
 }

@@ -11,6 +11,7 @@ bitflags! {
     // Vcpu request flag bits.
     pub struct VcpuReqFlags: u64 {
         const EN_X2APICV        = 1 << 0;
+        const VTIMER            = 1 << 1;
     }
 }
 
