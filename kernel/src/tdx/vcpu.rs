@@ -10,6 +10,7 @@ use super::gctx::GuestCpuContext;
 use super::tdcall::tdvmcall_sti_halt;
 use super::utils::{td_flush_vpid_global, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet};
 use super::vcpu_comm::VcpuCommBlock;
+use super::vlapic::Vlapic;
 use super::vmcs::Vmcs;
 use super::vmcs_lib::VmcsField32ReadOnly;
 use super::vmexit::VmExit;
@@ -44,6 +45,12 @@ enum VcpuState {
     Running,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ResetMode {
+    PowerOnReset, // Reset after power on
+    InitReset,    // Reset after init signal
+}
+
 pub struct Vcpu {
     vm_id: TdpVmId,
     apic_id: u32,
@@ -52,6 +59,7 @@ pub struct Vcpu {
     vmcs: Vmcs,
     ctx: GuestCpuContext,
     cb: Arc<VcpuCommBlock>,
+    vlapic: Vlapic,
 }
 
 impl Vcpu {
@@ -62,6 +70,7 @@ impl Vcpu {
         self.cur_state = VcpuState::Zombie;
         self.vmcs.init(vm_id, apic_id);
         self.ctx.init(vm_id);
+        self.vlapic.init(vm_id, apic_id, is_bsp);
         let cb = Arc::new(VcpuCommBlock::new(apic_id));
         unsafe { core::ptr::write(core::ptr::addr_of_mut!(self.cb), cb) };
     }
@@ -90,7 +99,7 @@ impl Vcpu {
                     self.idle();
                 }
                 VcpuState::PowerOnReset => {
-                    self.reset();
+                    self.reset(ResetMode::PowerOnReset);
                     self.update_cur_state(VcpuState::Inited);
                 }
                 VcpuState::Inited => {
@@ -177,8 +186,9 @@ impl Vcpu {
         enable_irq();
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self, mode: ResetMode) {
         self.ctx.reset();
+        self.vlapic.reset(mode);
     }
 
     fn configure_vmcs(&mut self) {
