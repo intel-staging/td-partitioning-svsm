@@ -10,6 +10,7 @@ extern crate alloc;
 
 use super::error::TdxError;
 use super::utils::{td_num_l2_vms, TdpVmId, FIRST_VM_ID, MAX_NUM_L2_VMS};
+use super::vcpu::kick_vcpu;
 use super::vcpu_comm::VcpuCommBlock;
 use super::vcpuid::Vcpuid;
 use crate::cpu::smp::get_nr_cpus;
@@ -20,7 +21,6 @@ use alloc::sync::Arc;
 use core::cell::OnceCell;
 use core::mem::MaybeUninit;
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Tdp {
     vm_id: TdpVmId,
@@ -61,6 +61,17 @@ impl Tdp {
                 .set(Arc::new(vcpu_comms.clone()))
                 .expect("Failed to init TDPCBS");
         }
+
+        if apic_id != self.bsp_apic_id {
+            // BSP may be waiting for all AP vcpus to complete
+            // the VcpuCommBlock registration. Kick BSP in case
+            // it is waiting.
+            kick_vcpu(self.bsp_apic_id);
+        }
+    }
+
+    pub fn vcpu_cbs_ready(&self) -> bool {
+        self.vcpu_comms.lock_write().len() as u64 == get_nr_cpus()
     }
 }
 

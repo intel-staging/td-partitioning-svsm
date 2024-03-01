@@ -106,6 +106,14 @@ impl Vcpu {
     pub fn run(&mut self) {
         if self.is_bsp {
             self.update_cur_state(VcpuState::PowerOnReset);
+            loop {
+                // Wait untils all AP vCPUs complete the VcpuCommBlock
+                // registration to Tdp.
+                if this_tdp(self.vm_id).vcpu_cbs_ready() {
+                    break;
+                }
+                self.idle()
+            }
         }
 
         loop {
@@ -261,7 +269,6 @@ impl Vcpu {
     }
 }
 
-#[allow(dead_code)]
 pub fn kick_vcpu(apic_id: u32) {
     if LAPIC.id() != apic_id {
         (*LAPIC).send_ipi(apic_id, VCPU_KICK_VECTOR);
