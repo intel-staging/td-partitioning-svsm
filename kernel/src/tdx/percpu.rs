@@ -6,6 +6,7 @@
 //  Chuanxiao Dong <chuanxiao.dong@intel.com>
 //  Jason CJ Chen <jason.cj.chen@intel.com>
 
+use super::interrupts::register_interrupt_handlers;
 use super::tdp::init_tdps;
 use super::utils::{tdvps_l2_ctls, L2CtlsFlags, TdpVmId, MAX_NUM_L2_VMS};
 use super::vcpu::Vcpu;
@@ -59,6 +60,7 @@ impl PerCpuArch for TdPerCpu {
         // Setup TD environment on BSP only
         if self.is_bsp {
             init_tdps(self.apic_id).map_err(SvsmError::Tdx)?;
+            register_interrupt_handlers()?;
         }
 
         if cpu_has_feature(X86_FEATURE_XSAVE) {

@@ -7,6 +7,7 @@
 extern crate alloc;
 
 use super::gctx::GuestCpuContext;
+use super::interrupts::VCPU_KICK_VECTOR;
 use super::tdcall::tdvmcall_sti_halt;
 use super::utils::{td_flush_vpid_global, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet};
 use super::vcpu_comm::{VcpuCommBlock, VcpuReqFlags};
@@ -15,6 +16,7 @@ use super::vmcs::Vmcs;
 use super::vmcs_lib::VmcsField32ReadOnly;
 use super::vmexit::VmExit;
 use crate::cpu::interrupts::{disable_irq, enable_irq};
+use crate::cpu::lapic::LAPIC;
 use crate::cpu::msr::{write_msr, MSR_IA32_PAT, MSR_IA32_PRED_CMD};
 use alloc::sync::Arc;
 
@@ -254,5 +256,12 @@ impl Vcpu {
                 );
             }
         }
+    }
+}
+
+#[allow(dead_code)]
+pub fn kick_vcpu(apic_id: u32) {
+    if LAPIC.id() != apic_id {
+        (*LAPIC).send_ipi(apic_id, VCPU_KICK_VECTOR);
     }
 }

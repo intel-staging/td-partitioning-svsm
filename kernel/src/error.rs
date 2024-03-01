@@ -4,6 +4,7 @@
 //
 // Author: Carlos López <carlos.lopez@suse.com>
 
+use crate::cpu::interrupts::IrqError;
 use crate::cpu::vc::VcError;
 use crate::fs::FsError;
 use crate::fw_cfg::FwCfgError;
@@ -61,4 +62,6 @@ pub enum SvsmError {
     Vc(VcError),
     // Errors related to TDX
     Tdx(TdxError),
+    // Interrupt handler register related error
+    Irq(IrqError),
 }
