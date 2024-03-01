@@ -190,6 +190,12 @@ pub fn get_cr4_guest_host_mask() -> u64 {
     !CR4_CONFIGS.pt_mask
 }
 
+pub fn get_cr4_reserved_mask() -> u64 {
+    init_cr0_cr4_configs();
+
+    CR4_CONFIGS.reserved_mask
+}
+
 pub struct GuestCpuCrRegs {
     cr0: RegCache<u64>,
     cr2: RegCache<u64>,

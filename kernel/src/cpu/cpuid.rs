@@ -183,6 +183,20 @@ bitflags! {
 
 bitflags! {
     #[derive(Copy, Clone, Debug)]
+    pub struct Cpuid06Eax: u32 {
+        const HWP       = 1 << 7;
+    }
+}
+
+bitflags! {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Cpuid06Ecx: u32 {
+        const HCF       = 1 << 0;
+    }
+}
+
+bitflags! {
+    #[derive(Copy, Clone, Debug)]
     pub struct Cpuid07_0Ebx: u32 {
         const FSGSBASE      = 1 << 0;
         const TSC_ADJUST    = 1 << 1;
@@ -215,6 +229,75 @@ bitflags! {
         const SHA           = 1 << 29;
         const AVX512BW      = 1 << 30;
         const AVX512VL      = 1 << 31;
+    }
+}
+
+bitflags! {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Cpuid07_0Ecx: u32 {
+        const PREFETCHWT1       = 1 << 0;
+        const AVX512_VBMI       = 1 << 1;
+        const UMIP              = 1 << 2;
+        const PKU               = 1 << 3;
+        const OSPKE             = 1 << 4;
+        const WAITPKG           = 1 << 5;
+        const AVX512_VBMI2      = 1 << 6;
+        const CET_SS            = 1 << 7;
+        const GFNI              = 1 << 8;
+        const VAES              = 1 << 9;
+        const VPCLMULQDQ        = 1 << 10;
+        const AVX512_VNNI       = 1 << 11;
+        const AVX512_BITALG     = 1 << 12;
+        const TME_EN            = 1 << 13;
+        const AVX512_VPOPCNTDQ  = 1 << 14;
+        const LA57              = 1 << 16;
+        const RDPID_TSCAUX      = 1 << 22;
+        const KL                = 1 << 23;
+        const BUS_LOCK_DETECT   = 1 << 24;
+        const CLDEMOTE          = 1 << 25;
+        const MOVDIRI           = 1 << 27;
+        const MOVDIRI64B        = 1 << 28;
+        const ENQCMD            = 1 << 29;
+        const SGX_LC            = 1 << 30;
+        const PKS               = 1 << 31;
+    }
+}
+
+bitflags! {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Cpuid07_0Edx: u32 {
+        const SGX_KEYS              = 1 << 1;
+        const AVX512_4VNNIW         = 1 << 2;
+        const AVX512_4FMAPS         = 1 << 3;
+        const FSRM                  = 1 << 4;
+        const UINTR                 = 1 << 5;
+        const AVX512_VP2INTERSECT   = 1 << 8;
+        const SRBDS_CTRL            = 1 << 9;
+        const MD_CLEAR              = 1 << 10;
+        const RTM_ALWAYS_ABORT      = 1 << 11;
+        const RTM_FORCE_ABORT       = 1 << 13;
+        const SERIALIZE             = 1 << 14;
+        const HYBRID                = 1 << 15;
+        const TSXLDTRK              = 1 << 16;
+        const PCONFIG               = 1 << 18;
+        const LBR                   = 1 << 19;
+        const CET_IBT               = 1 << 20;
+        const AMX_BF16              = 1 << 22;
+        const AVX512_FP16           = 1 << 23;
+        const AMX_TILE              = 1 << 24;
+        const AMX_INT8              = 1 << 25;
+        const IBRS_IBPB             = 1 << 26;
+        const STIBP                 = 1 << 27;
+        const L1D_FLUSH             = 1 << 28;
+        const ARCH_CAP              = 1 << 29;
+        const CORE_CAP              = 1 << 30;
+        const SSBD                  = 1 << 31;
+    }
+}
+
+bitflags! {
+    pub struct Cpuid40000001Eax: u32 {
+        const KVM_FEATURE_PV_SEND_IPI = 1 << 11;
     }
 }
 

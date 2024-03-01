@@ -8,6 +8,7 @@
 
 use super::error::TdxError;
 use super::utils::{td_num_l2_vms, TdpVmId, FIRST_VM_ID, MAX_NUM_L2_VMS};
+use super::vcpuid::Vcpuid;
 use crate::utils::immut_after_init::ImmutAfterInitCell;
 use core::cell::OnceCell;
 use core::mem::MaybeUninit;
@@ -17,6 +18,7 @@ use core::mem::MaybeUninit;
 pub struct Tdp {
     vm_id: TdpVmId,
     bsp_apic_id: u32,
+    vcpuid: Vcpuid,
 }
 
 type Tdps = [OnceCell<Tdp>; MAX_NUM_L2_VMS];
@@ -28,12 +30,12 @@ impl Tdp {
         Self {
             vm_id,
             bsp_apic_id: apic_id,
+            vcpuid: Vcpuid::new(),
         }
     }
 
     fn init(&mut self) -> Result<(), TdxError> {
-        // TODO: Tdp initialization code goes here
-        // if it is required.
+        self.vcpuid.init();
         Ok(())
     }
 }
