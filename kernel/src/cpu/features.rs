@@ -114,3 +114,12 @@ pub fn is_sev() -> bool {
 pub fn is_tdx() -> bool {
     cpu_type() == CpuType::Td
 }
+
+pub fn cpu_max_physaddr_bits() -> u8 {
+    let ret = cpuid(0x80000008);
+
+    match ret {
+        None => 0,
+        Some(c) => c.eax as u8,
+    }
+}
