@@ -106,7 +106,7 @@ fn supported_flags(flags: PTEntryFlags) -> PTEntryFlags {
     flags & *FEATURE_MASK
 }
 
-fn strip_c_bit(paddr: PhysAddr) -> PhysAddr {
+pub fn strip_c_bit(paddr: PhysAddr) -> PhysAddr {
     PhysAddr::from(paddr.bits() & !encrypt_mask())
 }
 

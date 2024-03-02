@@ -12,6 +12,7 @@ use crate::cpu::features::{is_sev, is_tdx};
 use crate::cpu::percpu::PERCPU_VMSAS;
 use crate::error::SvsmError;
 use crate::locking::RWLock;
+use crate::mm::pagetable::strip_c_bit;
 use crate::utils::MemoryRegion;
 use alloc::vec::Vec;
 use bootlib::kernel_launch::KernelLaunchInfo;
@@ -162,6 +163,25 @@ pub fn get_memory_map() -> Vec<MemoryRegion<GuestPhysAddr>> {
     }
 
     mr
+}
+
+pub fn is_guest_phys_addr_valid(gpa: GuestPhysAddr) -> bool {
+    let paddr = gpa.to_host_phys_addr();
+    let start = strip_c_bit(paddr).page_align();
+
+    for r in MEMORY_MAP.lock_read().iter() {
+        if r.contains(start) {
+            return true;
+        }
+    }
+
+    for r in ROM_MAP.lock_read().iter() {
+        if r.contains(start) {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
