@@ -6,7 +6,7 @@
 
 extern crate alloc;
 
-use crate::address::{Address, PhysAddr};
+use crate::address::{Address, GuestPhysAddr, PhysAddr};
 use crate::config::SvsmConfig;
 use crate::cpu::features::{is_sev, is_tdx};
 use crate::cpu::percpu::PERCPU_VMSAS;
@@ -147,6 +147,21 @@ fn init_rom_map(config: &SvsmConfig<'_>) -> Result<(), SvsmError> {
         log::info!("  {:018x}-{:018x}", r.start(), r.end());
     }
     Ok(())
+}
+
+pub fn get_memory_map() -> Vec<MemoryRegion<GuestPhysAddr>> {
+    let mut mr = Vec::new();
+
+    for r in MEMORY_MAP.lock_read().iter() {
+        // MEMORY_MAP only contains Guest Memory region as SVSM
+        // memory region is removed. And GuestPhysAddr == PhysAddr.
+        mr.push(MemoryRegion::new(
+            GuestPhysAddr::from(r.start().bits()),
+            r.len(),
+        ));
+    }
+
+    mr
 }
 
 #[cfg(test)]
