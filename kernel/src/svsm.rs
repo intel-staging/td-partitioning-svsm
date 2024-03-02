@@ -50,6 +50,7 @@ use svsm::sev::{init_hypervisor_ghcb_features, secrets_page, secrets_page_mut, s
 use svsm::svsm_console::{SVSMIOPort, SVSMTdIOPort};
 use svsm::svsm_paging::{init_page_table, invalidate_early_boot_memory};
 use svsm::task::{create_kernel_task, schedule_init, TASK_FLAG_SHARE_PT};
+use svsm::tdx::run_tdpvp;
 use svsm::types::{PageSize, GUEST_VMPL, PAGE_SIZE};
 use svsm::utils::{halt, immut_after_init::ImmutAfterInitCell, zero_mem_region};
 
@@ -404,7 +405,7 @@ pub extern "C" fn svsm_start(li: &KernelLaunchInfo, vb_addr: usize) {
 }
 
 fn tdpvp_start() {
-    //TODO: run tdpvp
+    run_tdpvp();
     unreachable!("Should never return from run_tdp!");
 }
 
