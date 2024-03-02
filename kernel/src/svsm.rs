@@ -28,7 +28,7 @@ use svsm::cpu::ghcb::current_ghcb;
 use svsm::cpu::idt::svsm::{early_idt_init, idt_init};
 use svsm::cpu::percpu::PerCpu;
 use svsm::cpu::percpu::{this_cpu, this_cpu_mut};
-use svsm::cpu::smp::start_secondary_cpus;
+use svsm::cpu::smp::{init_nr_cpus, start_secondary_cpus};
 use svsm::debug::gdbstub::svsm_gdbstub::{debug_break, gdbstub_start};
 use svsm::debug::stacktrace::print_stack;
 use svsm::elf;
@@ -453,6 +453,8 @@ pub extern "C" fn svsm_main() {
             nr_cpus += 1;
         }
     }
+
+    init_nr_cpus(nr_cpus);
 
     log::info!("{} CPU(s) present", nr_cpus);
 

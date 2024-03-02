@@ -22,6 +22,16 @@ use crate::utils::immut_after_init::ImmutAfterInitCell;
 use core::arch::asm;
 use core::arch::x86_64::_mm_sfence;
 
+static NR_CPUS: ImmutAfterInitCell<u64> = ImmutAfterInitCell::uninit();
+
+pub fn init_nr_cpus(nr: u64) {
+    NR_CPUS.init(&nr).expect("Failed to init NR_CPUS");
+}
+
+pub fn get_nr_cpus() -> u64 {
+    *NR_CPUS
+}
+
 static AP_FUNC: ImmutAfterInitCell<fn()> = ImmutAfterInitCell::uninit();
 
 #[repr(C, packed)]
