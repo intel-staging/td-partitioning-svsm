@@ -242,6 +242,11 @@ impl PerCpuShared {
 pub trait PerCpuArch: core::fmt::Debug {
     /// Downcast as immutable reference
     fn as_any(&self) -> &dyn Any;
+    /// Run architecture specific on_cpu setup code. This interface is called by
+    /// PerCpu.setup_on_cpu().
+    fn setup_on_cpu(&self) -> Result<(), SvsmError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -496,7 +501,7 @@ impl PerCpu {
         if is_sev() {
             self.register_ghcb()?;
         }
-        Ok(())
+        self.arch.setup_on_cpu()
     }
 
     pub fn setup_idle_task(&mut self, entry: extern "C" fn()) -> Result<(), SvsmError> {
