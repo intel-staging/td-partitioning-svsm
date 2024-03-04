@@ -4,10 +4,12 @@
 //
 // Author: Jason CJ Chen <jason.cj.chen@intel.com>
 
-use super::percpu::this_vcpu;
+use super::error::{ErrExcp, TdxError};
+use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::tdcall::tdvmcall_wrmsr;
 use super::utils::TdpVmId;
 use super::vcpu::ResetMode;
+use super::vcpu_comm::VcpuReqFlags;
 use super::vmcs_lib::VmcsField64Control;
 use crate::address::{PhysAddr, VirtAddr};
 use crate::cpu::msr::MSR_IA32_TSC_DEADLINE;
@@ -100,6 +102,10 @@ const APICBASE_X2APIC: u64 = 0x00000400;
 const APICBASE_XAPIC: u64 = 0x00000800;
 const APICBASE_LAPIC_MODE: u64 = APICBASE_XAPIC | APICBASE_X2APIC;
 const APICBASE_ENABLED: u64 = 0x00000800;
+const APICBASE_RESERVED: u64 = 0xFFFFFFF0_000002FF;
+
+const LOGICAL_ID_MASK: u32 = 0xF;
+const CLUSTER_ID_MASK: u32 = 0xFFFF0;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -336,7 +342,7 @@ impl Vlapic {
     }
 
     pub fn reset(&mut self, mode: ResetMode) {
-        let preserved_lapic_mode = self.regs.apic_base & APICBASE_LAPIC_MODE;
+        let preserved_lapic_mode = self.get_apicbase() & APICBASE_LAPIC_MODE;
         let preserved_apic_id = self.get_reg(APIC_OFFSET_ID);
         self.regs.apic_base = DEFAULT_APIC_BASE;
         if self.is_bsp {
@@ -515,5 +521,46 @@ impl Vlapic {
     #[inline(always)]
     fn is_x2apic(&self) -> bool {
         self.regs.is_x2apic()
+    }
+
+    fn build_x2apic_id(&mut self) {
+        let logical_id = self.apic_id & LOGICAL_ID_MASK;
+        let cluster_id = (self.apic_id & CLUSTER_ID_MASK) >> 4;
+        self.set_reg(APIC_OFFSET_ID, self.apic_id);
+        self.set_reg(APIC_OFFSET_LDR, (cluster_id << 16) | (1 << logical_id));
+    }
+
+    pub fn get_apicbase(&self) -> u64 {
+        self.regs.apic_base
+    }
+
+    pub fn set_apicbase(&mut self, new: u64) -> Result<(), TdxError> {
+        if new & APICBASE_RESERVED != 0 {
+            return Err(TdxError::InjectExcp(ErrExcp::GP(0)));
+        }
+        let old_apic_base = self.get_apicbase();
+        if old_apic_base != new {
+            let changed = old_apic_base ^ new;
+            /* Logic to check for change in Bits 11:10 for vLAPIC mode switch */
+            if (changed & APICBASE_LAPIC_MODE) != 0 {
+                let mode = new & APICBASE_LAPIC_MODE;
+                if mode == APICBASE_X2APIC {
+                    // Invalid lapic mode
+                    return Err(TdxError::InjectExcp(ErrExcp::GP(0)));
+                } else if mode == (APICBASE_XAPIC | APICBASE_X2APIC) {
+                    self.regs.apic_base = new;
+                    self.build_x2apic_id();
+                    this_vcpu_mut(self.vm_id).get_ctx_mut().set_intr_status(0);
+                    this_vcpu(self.vm_id)
+                        .get_cb()
+                        .make_request(VcpuReqFlags::EN_X2APICV);
+                } else {
+                    // TODO: Logic to check mode switch according to SDM 10.12.5
+                }
+            }
+            // TODO: Logic to check for change in Bits 35:12 and Bit 7 and emulate
+        }
+
+        Ok(())
     }
 }

@@ -418,6 +418,11 @@ impl GuestCpuContext {
         &self.msrs
     }
 
+    pub fn set_intr_status(&mut self, vec: u8) {
+        self.tdp_ctx.intr_status &= !0xff;
+        self.tdp_ctx.intr_status |= vec as u16;
+    }
+
     pub fn pre_vmentry(&mut self) -> u64 {
         // load ia32_efer if updated
         self.ia32_efer.sync_cache();

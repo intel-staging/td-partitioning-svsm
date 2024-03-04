@@ -9,7 +9,7 @@ extern crate alloc;
 use super::gctx::GuestCpuContext;
 use super::tdcall::tdvmcall_sti_halt;
 use super::utils::{td_flush_vpid_global, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet};
-use super::vcpu_comm::VcpuCommBlock;
+use super::vcpu_comm::{VcpuCommBlock, VcpuReqFlags};
 use super::vlapic::Vlapic;
 use super::vmcs::Vmcs;
 use super::vmcs_lib::VmcsField32ReadOnly;
@@ -87,6 +87,18 @@ impl Vcpu {
         &mut self.ctx
     }
 
+    pub fn get_vlapic(&self) -> &Vlapic {
+        &self.vlapic
+    }
+
+    pub fn get_vlapic_mut(&mut self) -> &mut Vlapic {
+        &mut self.vlapic
+    }
+
+    pub fn get_cb(&self) -> &Arc<VcpuCommBlock> {
+        &self.cb
+    }
+
     pub fn run(&mut self) {
         if self.is_bsp {
             self.update_cur_state(VcpuState::PowerOnReset);
@@ -109,6 +121,7 @@ impl Vcpu {
                 VcpuState::InitKicked => self.update_cur_state(VcpuState::WaitForSipi),
                 VcpuState::SipiKicked(_) => self.update_cur_state(VcpuState::Running),
                 VcpuState::Running => {
+                    self.handle_request();
                     let l2exit_info = self.vmenter();
 
                     // With pending interrupt in svsm, vmenter actually didn't
@@ -204,6 +217,13 @@ impl Vcpu {
         // A power-up or a reset invalidates all linear mappings,
         // guest-physical mappings, and combined mappings
         td_flush_vpid_global(self.vm_id);
+    }
+
+    fn handle_request(&mut self) {
+        if self.cb.test_and_clear_request(VcpuReqFlags::EN_X2APICV) {
+            self.vmcs.enable_x2apic_virtualization();
+            self.ctx.get_msrs_mut().update_msr_bitmap_x2apic_apicv();
+        }
     }
 
     fn vmenter(&mut self) -> Option<L2ExitInfo> {

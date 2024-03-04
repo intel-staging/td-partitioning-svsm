@@ -553,14 +553,12 @@ impl MsrEmulation for ApicBaseVmsr {
         MSR_IA32_APIC_BASE
     }
 
-    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
-        // TODO: APIC_BASE msr should be emulated by vlapic.
-        Err(TdxError::Vmsr)
+    fn read(&self, vm_id: TdpVmId) -> Result<u64, TdxError> {
+        Ok(this_vcpu(vm_id).get_vlapic().get_apicbase())
     }
 
-    fn write(&mut self, _vm_id: TdpVmId, _data: u64) -> Result<(), TdxError> {
-        // TODO: APIC_BASE msr should be emulated by vlapic.
-        Err(TdxError::Vmsr)
+    fn write(&mut self, vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        this_vcpu_mut(vm_id).get_vlapic_mut().set_apicbase(data)
     }
 }
 
@@ -652,7 +650,6 @@ pub struct GuestCpuMsrs {
     bitmap: MsrBitmap,
 }
 
-#[allow(dead_code)]
 impl GuestCpuMsrs {
     pub fn init(&mut self, vm_id: TdpVmId) {
         self.vm_id = vm_id;

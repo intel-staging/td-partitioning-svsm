@@ -10,6 +10,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 bitflags! {
     // Vcpu request flag bits.
     pub struct VcpuReqFlags: u64 {
+        const EN_X2APICV        = 1 << 0;
     }
 }
 

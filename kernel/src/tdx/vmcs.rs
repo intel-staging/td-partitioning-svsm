@@ -253,6 +253,40 @@ impl Vmcs {
         self.write64(VmcsField64Guest::IA32_PAT, pat_power_on_val);
         self.write64(VmcsField64Guest::DR7, dr7_init_value);
     }
+
+    pub fn enable_x2apic_virtualization(&mut self) {
+        let mut secondary_vmexec = self.read32(VmcsField32Control::SECONDARY_VM_EXEC_CONTROL);
+        assert!(
+            VMCS_CAPS.allow_set_vm_ctrl32(VmCtrlType32::SecondaryVmExec(VmCtrlCheck32 {
+                default: 0,
+                set: (SecondaryVmExecControls::VIRTUAL_X2APIC
+                    | SecondaryVmExecControls::APIC_REGISTER_VIRT
+                    | SecondaryVmExecControls::VIRT_INTR_DELIVERY)
+                    .bits(),
+                clear: 0,
+            }))
+        );
+        secondary_vmexec |= (SecondaryVmExecControls::VIRTUAL_X2APIC
+            | SecondaryVmExecControls::APIC_REGISTER_VIRT
+            | SecondaryVmExecControls::VIRT_INTR_DELIVERY)
+            .bits();
+
+        self.write32(
+            VmcsField32Control::SECONDARY_VM_EXEC_CONTROL,
+            secondary_vmexec,
+        );
+
+        // Disable CR8 interception.
+        self.proc_vm_exec_ctrls &= !(PrimaryVmExecControls::CR8_LOAD_EXITING.bits()
+            | PrimaryVmExecControls::CR8_STORE_EXITING.bits());
+        // Make sure TPR shadow is enabled.
+        self.proc_vm_exec_ctrls |= PrimaryVmExecControls::VIRTUAL_TPR.bits();
+
+        self.write32(
+            VmcsField32Control::PROC_BASED_VM_EXEC_CONTROL,
+            self.proc_vm_exec_ctrls,
+        );
+    }
 }
 
 struct VmCtrlCheck32 {
