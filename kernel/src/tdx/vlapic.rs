@@ -1167,6 +1167,26 @@ impl Vlapic {
             apic_id >> APIC_ID_SHIFT
         }
     }
+
+    // xapic only
+    pub fn read_cr8(&self) -> Result<u64, TdxError> {
+        if !self.is_x2apic() {
+            Ok(((self.get_reg(APIC_OFFSET_TPR) & 0xf0) >> 4) as u64)
+        } else {
+            Err(TdxError::Vlapic)
+        }
+    }
+
+    // xapic only
+    pub fn write_cr8(&mut self, cr8: u64) -> Result<(), TdxError> {
+        if !self.is_x2apic() {
+            self.set_reg(APIC_OFFSET_TPR, ((cr8 & 0x0f) << 4) as u32);
+            self.update_ppr();
+            Ok(())
+        } else {
+            Err(TdxError::Vlapic)
+        }
+    }
 }
 
 const DELMODE_FIXED: u32 = 0x0; // Delivery Mode: Fixed

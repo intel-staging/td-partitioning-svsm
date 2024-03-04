@@ -5,6 +5,7 @@
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
 use super::ioreq::IoType;
+use super::vmexit::VmExitReason;
 use crate::address::GuestVirtAddr;
 use crate::cpu::idt::common::PageFaultErrCode;
 
@@ -55,6 +56,8 @@ pub enum TdxError {
     TdpNotSupport,
     // Unaligned phys Address
     UnalignedPhysAddr,
+    // Unsupported vmexit
+    UnSupportedVmExit(VmExitReason),
     // Virtual ioapic related error
     Vioapic,
     // Virtual apic related error

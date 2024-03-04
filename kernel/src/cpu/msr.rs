@@ -85,6 +85,15 @@ pub const PAT_POWER_ON_VALUE: u64 = PAT_MEM_TYPE_WRITE_BACK
     + (PAT_MEM_TYPE_UNCACHED << 48)
     + (PAT_MEM_TYPE_UNCACHEABLE << 56);
 
+pub const PAT_ALL_UC_VALUE: u64 = PAT_MEM_TYPE_UNCACHEABLE
+    + (PAT_MEM_TYPE_UNCACHEABLE << 8)
+    + (PAT_MEM_TYPE_UNCACHEABLE << 16)
+    + (PAT_MEM_TYPE_UNCACHEABLE << 24)
+    + (PAT_MEM_TYPE_UNCACHEABLE << 32)
+    + (PAT_MEM_TYPE_UNCACHEABLE << 40)
+    + (PAT_MEM_TYPE_UNCACHEABLE << 48)
+    + (PAT_MEM_TYPE_UNCACHEABLE << 56);
+
 bitflags! {
     pub struct MsrIa32FeatureControl: u64 {
         const LOCK          = 1 << 0;

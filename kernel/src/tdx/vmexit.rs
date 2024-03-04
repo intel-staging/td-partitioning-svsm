@@ -37,6 +37,14 @@ bitflags::bitflags! {
 }
 
 #[derive(Copy, Clone, Debug)]
+pub enum CrAccessType {
+    MovToCr(u8, GuestCpuGPRegCode),
+    MovFromCr(u8, GuestCpuGPRegCode),
+    Clts,
+    Lmsw,
+}
+
+#[derive(Copy, Clone, Debug)]
 pub enum VmExitReason {
     ExceptionNMI {
         intr_info: u32,
@@ -50,6 +58,9 @@ pub enum VmExitReason {
     Hlt,
     Vmcall {
         cpl: u8,
+    },
+    CrAccess {
+        access_type: CrAccessType,
     },
     IoInstruction {
         size: usize,
@@ -82,6 +93,26 @@ impl VmExitReason {
             12 => VmExitReason::Hlt,
             18 => VmExitReason::Vmcall {
                 cpl: l2exit_info.cpl,
+            },
+            28 => VmExitReason::CrAccess {
+                access_type: {
+                    let qualification = l2exit_info.exit_qual;
+                    let cr_num = (qualification & 0xf) as u8;
+                    let reg_idx = ((qualification >> 8) & 0xf) as u8;
+                    match (qualification >> 4) & 0x3 {
+                        0 => CrAccessType::MovToCr(
+                            cr_num,
+                            GuestCpuGPRegCode::try_from(reg_idx).unwrap(),
+                        ),
+                        1 => CrAccessType::MovFromCr(
+                            cr_num,
+                            GuestCpuGPRegCode::try_from(reg_idx).unwrap(),
+                        ),
+                        2 => CrAccessType::Clts,
+                        3 => CrAccessType::Lmsw,
+                        _ => unreachable!("VmExitCRInfo: invalid qualification"),
+                    }
+                },
             },
             30 => VmExitReason::IoInstruction {
                 size: ((l2exit_info.exit_qual & 0x7) + 1) as usize,
@@ -198,6 +229,50 @@ impl VmExit {
             // Inject UD for other cases
             Err(TdxError::InjectExcp(ErrExcp::UD))
         }
+    }
+
+    fn handle_cr(&self, access_type: CrAccessType) -> Result<(), TdxError> {
+        let ctx = this_vcpu_mut(self.vm_id).get_ctx_mut();
+        match access_type {
+            CrAccessType::MovToCr(cr, reg) => {
+                let cr_val = ctx.get_gpreg(reg);
+                match cr {
+                    0 => ctx.set_cr0(cr_val)?,
+                    4 => ctx.set_cr4(cr_val)?,
+                    8 => this_vcpu_mut(self.vm_id)
+                        .get_vlapic_mut()
+                        .write_cr8(cr_val)?,
+                    _ => {
+                        log::error!("Handle CR: Mov to CR{} unsupported", cr);
+                        return Err(TdxError::UnSupportedVmExit(VmExitReason::CrAccess {
+                            access_type,
+                        }));
+                    }
+                }
+            }
+            CrAccessType::MovFromCr(cr, reg) => match cr {
+                8 => {
+                    let cr_val = this_vcpu(self.vm_id).get_vlapic().read_cr8()?;
+                    ctx.set_gpreg(reg, cr_val);
+                }
+                _ => {
+                    log::error!("Handle CR: Mov from CR{} unsupported", cr);
+                    return Err(TdxError::UnSupportedVmExit(VmExitReason::CrAccess {
+                        access_type,
+                    }));
+                }
+            },
+            _ => {
+                log::error!("Handle CR: unsupported access_type {:?}", access_type);
+                return Err(TdxError::UnSupportedVmExit(VmExitReason::CrAccess {
+                    access_type,
+                }));
+            }
+        }
+
+        self.skip_instruction();
+
+        Ok(())
     }
 
     fn handle_io(&self, size: usize, read: bool, string: bool, port: u16) -> Result<(), TdxError> {
@@ -345,6 +420,7 @@ impl VmExit {
             VmExitReason::Cpuid => self.handle_cpuid(),
             VmExitReason::Hlt => self.handle_hlt(),
             VmExitReason::Vmcall { cpl } => self.handle_vmcall(cpl)?,
+            VmExitReason::CrAccess { access_type } => self.handle_cr(access_type)?,
             VmExitReason::IoInstruction {
                 size,
                 read,

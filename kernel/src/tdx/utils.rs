@@ -197,6 +197,10 @@ pub fn td_flush_vpid_global(vm_id: TdpVmId) {
     td_invvpid(vm_id.num(), VMX_VPID_TYPE_ALL_CONTEXT, 0);
 }
 
+pub fn td_invept(vm_id: TdpVmId) {
+    let _ = tdcall_vp_invept(1 << vm_id.num());
+}
+
 #[derive(Copy, Clone, Default)]
 pub struct L2ExitInfo {
     pub exit_reason: u32,

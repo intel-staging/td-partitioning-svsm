@@ -5,6 +5,7 @@
 // Author: Jason CJ Chen <jason.cj.chen@intel.com>
 
 use super::error::TdxError;
+use super::msr_bitmap::InterceptMsrType;
 use super::percpu::this_vcpu;
 use super::utils::TdpVmId;
 use super::vcr::GuestCpuCrRegs;
@@ -15,6 +16,7 @@ use super::vmcs_lib::{
 use super::vmsr::GuestCpuMsrs;
 use crate::address::VirtAddr;
 use crate::cpu::control_regs::{CR0Flags, CR4Flags};
+use crate::cpu::msr::{MSR_IA32_PAT, PAT_ALL_UC_VALUE};
 use crate::locking::SpinLock;
 use crate::mm::address_space::virt_to_phys;
 use core::default::Default;
@@ -333,7 +335,7 @@ impl GuestCpuSegs {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GuestCpuGPRegCode {
     Rax,
     Rcx,
@@ -540,6 +542,35 @@ impl GuestCpuContext {
         self.cr.get_cr0()
     }
 
+    pub fn set_cr0(&mut self, val: u64) -> Result<(), TdxError> {
+        let update_pat = self.cr.set_cr0(val)?;
+        if update_pat {
+            if self.cr.get_cr0() & CR0Flags::CD.bits() != 0 {
+                let vmcs = this_vcpu(self.vm_id).get_vmcs();
+                // Update vMSR value as PAT was previously passed thru
+                let pat = vmcs.read64(VmcsField64Guest::IA32_PAT);
+                self.msrs.write(MSR_IA32_PAT, pat)?;
+                // When the guest requests to set CR0.CD, we don't allow
+                // guest's CR0.CD to be actually set, instead, we write
+                // guest IA32_PAT with all-UC entries to emulate the
+                // cache-disabled behavior
+                vmcs.write64(VmcsField64Guest::IA32_PAT, PAT_ALL_UC_VALUE);
+                // Accesses to IA32_PAT are intercepted and emulated
+                self.msrs
+                    .intercept(MSR_IA32_PAT, InterceptMsrType::ReadWrite)?;
+            } else {
+                // Restore IA32_PAT to enable cache again
+                let pat = self.msrs.read(MSR_IA32_PAT)?;
+                self.msrs.write(MSR_IA32_PAT, pat)?;
+                // Pass thru IA32_PAT
+                self.msrs
+                    .intercept(MSR_IA32_PAT, InterceptMsrType::Disable)?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn set_cr2(&mut self, val: u64) -> Result<(), TdxError> {
         self.cr.set_cr2(val)
     }
@@ -550,6 +581,10 @@ impl GuestCpuContext {
 
     pub fn get_cr4(&self) -> u64 {
         self.cr.get_cr4()
+    }
+
+    pub fn set_cr4(&mut self, val: u64) -> Result<(), TdxError> {
+        self.cr.set_cr4(val)
     }
 
     pub fn get_msrs_mut(&mut self) -> &mut GuestCpuMsrs {

@@ -12,7 +12,7 @@ use super::interrupts::VCPU_KICK_VECTOR;
 use super::percpu::this_sirte_mut;
 use super::tdcall::tdvmcall_sti_halt;
 use super::tdp::this_tdp;
-use super::utils::{td_flush_vpid_global, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet};
+use super::utils::{td_flush_vpid_global, td_invept, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet};
 use super::vcpu_comm::{VcpuCommBlock, VcpuReqFlags};
 use super::virq::Virq;
 use super::vlapic::Vlapic;
@@ -300,6 +300,10 @@ impl Vcpu {
 
         if self.cb.test_and_clear_request(VcpuReqFlags::SIRTE) {
             this_sirte_mut(self.vm_id).handle_sirte();
+        }
+
+        if self.cb.test_and_clear_request(VcpuReqFlags::FLUSH_EPT) {
+            td_invept(self.vm_id);
         }
 
         if self.cb.test_and_clear_request(VcpuReqFlags::INJ_EXCP) {

@@ -18,6 +18,7 @@ bitflags! {
         const INJ_EXCP          = 1 << 5;
         const TRPFAULT          = 1 << 6;
         const DIS_IRQWIN        = 1 << 7;
+        const FLUSH_EPT         = 1 << 8;
     }
 }
 

@@ -9,6 +9,7 @@ use super::gctx::RegCache;
 use super::gmem::copy_from_gpa;
 use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::utils::TdpVmId;
+use super::vcpu_comm::VcpuReqFlags;
 use super::vmcs::Vmcs;
 use super::vmcs_lib::{VmEntryControls, VmcsField32Control, VmcsField64Control, VmcsField64Guest};
 use crate::address::GuestPhysAddr;
@@ -365,7 +366,7 @@ impl GuestCpuCrRegs {
         self.cr0.read_cache()
     }
 
-    pub fn set_cr0(&mut self, val: u64) -> Result<(), TdxError> {
+    pub fn set_cr0(&mut self, val: u64) -> Result<bool, TdxError> {
         let vm_id = self.cr0.vm_id();
         let vmcs = this_vcpu(vm_id).get_vmcs();
         let ctx = this_vcpu_mut(vm_id).get_ctx_mut();
@@ -406,12 +407,14 @@ impl GuestCpuCrRegs {
         }
 
         if changed_cr0.contains(CR0Flags::PG | CR0Flags::WP | CR0Flags::CD) {
-            // TODO: Handle MSR_IA32_PAT and Flush EPT
+            this_vcpu(vm_id)
+                .get_cb()
+                .make_request(VcpuReqFlags::FLUSH_EPT);
         }
 
         self.cr0.write_cache(effective_cr0.bits());
 
-        Ok(())
+        Ok(changed_cr0.contains(CR0Flags::CD))
     }
 
     fn get_effective_cr4(&self, val: u64, efer: EFERFlags) -> Result<CR4Flags, TdxError> {

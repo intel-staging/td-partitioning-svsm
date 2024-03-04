@@ -779,4 +779,9 @@ impl GuestCpuMsrs {
             .intercept(MSR_IA32_EXT_APIC_TPR, InterceptMsrType::Disable)
             .expect("error configuring MSR interception for MSR_IA32_EXT_APIC_TPR");
     }
+
+    pub fn intercept(&mut self, msr: u32, inttype: InterceptMsrType) -> Result<(), TdxError> {
+        let mut bitmap = self.new_bitmap_ref();
+        bitmap.intercept(msr, inttype)
+    }
 }
