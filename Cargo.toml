@@ -37,6 +37,7 @@ zerocopy = { version = "0.7.32", features = ["derive"] }
 # other repos
 packit = { git = "https://github.com/coconut-svsm/packit", version = "0.1.1" }
 lazy_static = { version = "1.0", features = ["spin_no_std"] }
+bitfield-struct = "0.6.0"
 
 [workspace.lints.rust]
 future_incompatible = "deny"

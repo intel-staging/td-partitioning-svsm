@@ -685,3 +685,20 @@ pub fn tdcall_vp_enter(vm_flags: u64, gpa: u64) -> TdcallArgs {
 
     args
 }
+
+pub fn tdvmcall_share_irte_hdr(paddr: u64, vm_idx: u32) -> Result<(), TdVmcallError> {
+    let mut args = TdVmcallArgs {
+        r11: TDVMCALL_SHARED_IRTE_HDR,
+        r12: paddr,
+        r13: vm_idx as u64,
+        ..Default::default()
+    };
+
+    let ret = td_vmcall(&mut args);
+
+    if ret != TDVMCALL_STATUS_SUCCESS {
+        return Err(ret.into());
+    }
+
+    Ok(())
+}

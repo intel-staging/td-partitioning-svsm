@@ -52,6 +52,10 @@ const TDVMCALL_MAPGPA: u64 = 0x10001;
 const TDVMCALL_GETQUOTE: u64 = 0x10002;
 const TDVMCALL_SETUPEVENTNOTIFY: u64 = 0x10004;
 
+// FIXME: Custom TDVMCALLs for SVSM to support TDP
+// guest, which are not defined in GHCI spec.
+const TDVMCALL_SHARED_IRTE_HDR: u64 = 0x20001;
+
 // TDCALL completion status code
 const TDCALL_STATUS_SUCCESS: u64 = 0;
 // leaf-specific completion status code

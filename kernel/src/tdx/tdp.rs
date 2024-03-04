@@ -9,10 +9,12 @@
 extern crate alloc;
 
 use super::error::TdxError;
+use super::sirte::handle_sirte_request;
 use super::utils::{td_num_l2_vms, TdpVmId, FIRST_VM_ID, MAX_NUM_L2_VMS};
 use super::vcpu::kick_vcpu;
 use super::vcpu_comm::VcpuCommBlock;
 use super::vcpuid::Vcpuid;
+use crate::cpu::interrupts::register_interrupt_handler;
 use crate::cpu::smp::get_nr_cpus;
 use crate::locking::RWLock;
 use crate::utils::immut_after_init::ImmutAfterInitCell;
@@ -27,6 +29,7 @@ pub struct Tdp {
     bsp_apic_id: u32,
     vcpuid: Vcpuid,
     vcpu_comms: RWLock<BTreeMap<u32, Arc<VcpuCommBlock>>>,
+    sirte_vec: Option<u8>,
 }
 
 type Tdps = [OnceCell<Tdp>; MAX_NUM_L2_VMS];
@@ -44,11 +47,18 @@ impl Tdp {
             bsp_apic_id: apic_id,
             vcpuid: Vcpuid::new(),
             vcpu_comms: RWLock::new(BTreeMap::new()),
+            sirte_vec: None,
         }
     }
 
     fn init(&mut self) -> Result<(), TdxError> {
         self.vcpuid.init();
+        self.sirte_vec = Some(
+            register_interrupt_handler(None, handle_sirte_request).map_err(|e| {
+                log::error!("Tdp failed to register sirte handler: {:?}", e);
+                TdxError::Sirte
+            })?,
+        );
         Ok(())
     }
 
@@ -72,6 +82,10 @@ impl Tdp {
 
     pub fn vcpu_cbs_ready(&self) -> bool {
         self.vcpu_comms.lock_write().len() as u64 == get_nr_cpus()
+    }
+
+    pub fn get_sirte_vec(&self) -> Option<u8> {
+        self.sirte_vec
     }
 }
 

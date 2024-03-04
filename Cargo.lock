@@ -112,6 +112,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitfield-struct"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b0fe3d90b1534e1b0e92008ad2d9f9a3ddb650965ae0592ed1d1031b9dea94f"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.48",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -322,7 +333,7 @@ version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b39ce99255103ed59ba094d96b76f02888b2d758bf8d3073db07b1639d84133"
 dependencies = [
- "bitfield-struct",
+ "bitfield-struct 0.5.6",
  "crc32fast",
  "hex",
  "igvm_defs",
@@ -339,7 +350,7 @@ version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "757d494b41d5e46cfdc6b0dd8aeaf61f8f557a62b546dc4cb000a0d86d195b84"
 dependencies = [
- "bitfield-struct",
+ "bitfield-struct 0.5.6",
  "open-enum",
  "static_assertions",
  "zerocopy 0.7.32",
@@ -557,6 +568,7 @@ name = "svsm"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "bitfield-struct 0.6.0",
  "bitflags 2.4.2",
  "bootlib",
  "cpuarch",

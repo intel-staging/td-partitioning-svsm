@@ -7,7 +7,7 @@
 use super::error::TdxError;
 use super::tdcall::{
     td_accept_memory, tdcall_vm_read, tdcall_vp_enter, tdcall_vp_invept, tdcall_vp_invvpid,
-    tdcall_vp_write, tdvmcall_mapgpa, TdcallArgs,
+    tdcall_vp_write, tdvmcall_mapgpa, tdvmcall_share_irte_hdr, TdcallArgs,
 };
 use crate::address::{Address, GuestPhysAddr, PhysAddr};
 use crate::cpu::percpu::this_cpu_mut;
@@ -255,7 +255,6 @@ pub fn td_vp_enter(vm_id: TdpVmId, ctx_pa: u64) -> VpEnterRet {
     }
 }
 
-#[allow(dead_code)]
 pub fn td_convert_kernel_pages(
     start: PhysAddr,
     end: PhysAddr,
@@ -299,4 +298,11 @@ pub fn td_convert_kernel_pages(
     }
 
     Ok(end - start)
+}
+
+pub fn td_share_irte_hdr(phys: PhysAddr, vm_id: TdpVmId) -> Result<(), TdxError> {
+    tdvmcall_share_irte_hdr(u64::from(phys), vm_id.index() as u32).map_err(|e| {
+        log::error!("share_irte_hdr failed {:?} e", e);
+        TdxError::Sirte
+    })
 }

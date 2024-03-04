@@ -7,6 +7,7 @@
 //  Jason CJ Chen <jason.cj.chen@intel.com>
 
 use super::interrupts::{register_interrupt_handlers, TIMER_VECTOR};
+use super::sirte::Sirte;
 use super::tdp::init_tdps;
 use super::utils::{tdvps_l2_ctls, L2CtlsFlags, TdpVmId, MAX_NUM_L2_VMS};
 use super::vcpu::Vcpu;
@@ -27,6 +28,7 @@ use core::mem::MaybeUninit;
 struct TdpVp {
     vcpu: Vcpu,
     l2ctls: L2CtlsFlags,
+    sirte: Sirte,
 }
 
 impl TdpVp {
@@ -34,6 +36,7 @@ impl TdpVp {
         self.vcpu.init(vm_id, apic_id, is_bsp);
         self.l2ctls = L2CtlsFlags::EnableSharedEPTP;
         tdvps_l2_ctls(vm_id, self.l2ctls).expect("Failed to set L2 controls");
+        self.sirte.init(vm_id).expect("Failed to init SIRTE");
     }
 
     fn run(&mut self) {

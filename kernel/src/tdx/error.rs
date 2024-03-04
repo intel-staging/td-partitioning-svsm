@@ -26,6 +26,8 @@ pub enum TdxError {
     PageAccept,
     // Read Guest Memory failed
     ReadGuestMem,
+    // Sirte related failure
+    Sirte,
     // Tdp guest is not supported
     TdpNotSupport,
     // Unaligned phys Address
