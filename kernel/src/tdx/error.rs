@@ -29,6 +29,8 @@ pub enum TdxError {
     GuestPGT,
     // Require to inject exception to Guest
     InjectExcp(ErrExcp),
+    // Invalid AddrSize
+    InvalidAddrSize,
     // Invalid code to translate to GuestCpuGPReg
     InvalidGPRegCode,
     // Invalid vector

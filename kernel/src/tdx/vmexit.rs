@@ -41,6 +41,12 @@ pub enum VmExitReason {
     ExternalInterrupt,
     InitSignal,
     InterruptWindow,
+    IoInstruction {
+        size: usize,
+        read: bool,
+        string: bool,
+        port: u16,
+    },
     MsrRead,
     MsrWrite,
     EptViolation {
@@ -61,6 +67,12 @@ impl VmExitReason {
             1 => VmExitReason::ExternalInterrupt,
             3 => VmExitReason::InitSignal,
             7 => VmExitReason::InterruptWindow,
+            30 => VmExitReason::IoInstruction {
+                size: ((l2exit_info.exit_qual & 0x7) + 1) as usize,
+                read: (l2exit_info.exit_qual & 0x8) != 0,
+                string: (l2exit_info.exit_qual & 0x10) != 0,
+                port: (l2exit_info.exit_qual >> 16) as u16,
+            },
             31 => VmExitReason::MsrRead,
             32 => VmExitReason::MsrWrite,
             48 => VmExitReason::EptViolation {
@@ -129,6 +141,34 @@ impl VmExit {
         this_vcpu(self.vm_id)
             .get_cb()
             .make_request(VcpuReqFlags::DIS_IRQWIN);
+    }
+
+    fn handle_io(&self, size: usize, read: bool, string: bool, port: u16) -> Result<(), TdxError> {
+        let io_dir = if read {
+            IoDirection::Read
+        } else {
+            IoDirection::Write
+        };
+        let mut io_req = if string {
+            IoReq::new(
+                self.vm_id,
+                IoType::StringPio {
+                    port,
+                    instr_len: self.exit_instr_len as usize,
+                },
+                io_dir,
+            )
+        } else {
+            IoReq::new(self.vm_id, IoType::Pio { port, size }, io_dir)
+        };
+
+        io_req.emulate()?;
+
+        if !io_req.need_retry() {
+            self.skip_instruction();
+        }
+
+        Ok(())
     }
 
     fn handle_rdmsr(&self) -> Result<(), TdxError> {
@@ -244,6 +284,12 @@ impl VmExit {
             VmExitReason::ExternalInterrupt => self.handle_external_interrupt(),
             VmExitReason::InitSignal => self.handle_init_signal(),
             VmExitReason::InterruptWindow => self.handle_interrupt_window(),
+            VmExitReason::IoInstruction {
+                size,
+                read,
+                string,
+                port,
+            } => self.handle_io(size, read, string, port)?,
             VmExitReason::MsrRead => self.handle_rdmsr()?,
             VmExitReason::MsrWrite => self.handle_wrmsr()?,
             VmExitReason::EptViolation { fault_gpa, flags } => {

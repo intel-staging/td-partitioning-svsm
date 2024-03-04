@@ -5,10 +5,14 @@
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
 use super::error::TdxError;
+use super::gctx::{GuestCpuContext, GuestCpuGPRegCode};
 use super::gmem::{copy_from_gpa, copy_to_gpa};
 use super::instr_emul::InstrEmul;
 use super::percpu::{this_vcpu, this_vcpu_mut};
-use super::tdcall::{tdvmcall_mmio_read, tdvmcall_mmio_write};
+use super::tdcall::{
+    tdvmcall_io_read_16, tdvmcall_io_read_32, tdvmcall_io_read_8, tdvmcall_io_write_16,
+    tdvmcall_io_write_32, tdvmcall_io_write_8, tdvmcall_mmio_read, tdvmcall_mmio_write,
+};
 use super::tdp::this_tdp;
 use super::utils::TdpVmId;
 use crate::address::GuestPhysAddr;
@@ -53,6 +57,21 @@ impl AddrSize {
             AddrSize::TwoBytes => (1 << 16) - 1,
             AddrSize::FourBytes => (1 << 32) - 1,
             AddrSize::EightBytes => u64::MAX,
+        }
+    }
+}
+
+impl TryFrom<usize> for AddrSize {
+    type Error = TdxError;
+
+    fn try_from(val: usize) -> Result<AddrSize, Self::Error> {
+        match val {
+            0 => Ok(AddrSize::ZeroByte),
+            1 => Ok(AddrSize::OneByte),
+            2 => Ok(AddrSize::TwoBytes),
+            4 => Ok(AddrSize::FourBytes),
+            8 => Ok(AddrSize::EightBytes),
+            _ => Err(TdxError::InvalidAddrSize),
         }
     }
 }
@@ -136,10 +155,44 @@ impl IoEmul for IoInstrEmul<'_> {
     }
 }
 
+struct PioEmul {
+    ctx: &'static mut GuestCpuContext,
+    size: AddrSize,
+}
+
+impl IoEmul for PioEmul {
+    fn emulate_read(&mut self, io_op: &mut IoOperation) -> Result<(), TdxError> {
+        let rax = self.ctx.get_gpreg(GuestCpuGPRegCode::Rax);
+        let mask = self.get_opsize().mask();
+        self.ctx
+            .set_gpreg(GuestCpuGPRegCode::Rax, (rax & !mask) | (io_op.data & mask));
+        Ok(())
+    }
+
+    fn emulate_write(&mut self, io_op: &mut IoOperation) -> Result<(), TdxError> {
+        let rax = self.ctx.get_gpreg(GuestCpuGPRegCode::Rax);
+        io_op.data = rax & self.get_opsize().mask();
+
+        Ok(())
+    }
+
+    fn get_opsize(&self) -> AddrSize {
+        self.size
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum IoType {
     Mmio {
         addr: GuestPhysAddr,
+        instr_len: usize,
+    },
+    Pio {
+        port: u16,
+        size: usize,
+    },
+    StringPio {
+        port: u16,
         instr_len: usize,
     },
 }
@@ -236,10 +289,48 @@ impl IoReq {
         Ok(())
     }
 
+    fn emulate_pio(&mut self, port: u16, mut emul: impl IoEmul) -> Result<(), TdxError> {
+        let io_op = &mut self.io_op;
+        if io_op.is_read() {
+            io_op.data = match emul.get_opsize() {
+                AddrSize::OneByte => tdvmcall_io_read_8(port) as u64,
+                AddrSize::TwoBytes => tdvmcall_io_read_16(port) as u64,
+                AddrSize::FourBytes => tdvmcall_io_read_32(port) as u64,
+                _ => return Err(TdxError::IoEmul(self.io_type)),
+            };
+
+            emul.emulate_read(io_op)?;
+        } else {
+            emul.emulate_write(io_op)?;
+            match emul.get_opsize() {
+                AddrSize::OneByte => tdvmcall_io_write_8(port, io_op.data as u8),
+                AddrSize::TwoBytes => tdvmcall_io_write_16(port, io_op.data as u16),
+                AddrSize::FourBytes => tdvmcall_io_write_32(port, io_op.data as u32),
+                _ => return Err(TdxError::IoEmul(self.io_type)),
+            };
+        }
+
+        Ok(())
+    }
+
     pub fn emulate(&mut self) -> Result<(), TdxError> {
         match self.io_type {
             IoType::Mmio { addr, instr_len } => self.emulate_mmio(
                 addr,
+                IoInstrEmul(InstrEmul::decode_instr(
+                    this_vcpu_mut(self.vm_id).get_ctx_mut(),
+                    instr_len,
+                )?),
+            ),
+            IoType::Pio { port, size } => {
+                let emul = PioEmul {
+                    ctx: this_vcpu_mut(self.vm_id).get_ctx_mut(),
+                    size: AddrSize::try_from(size)?,
+                };
+                self.emulate_pio(port, emul)
+            }
+            IoType::StringPio { port, instr_len } => self.emulate_pio(
+                port,
                 IoInstrEmul(InstrEmul::decode_instr(
                     this_vcpu_mut(self.vm_id).get_ctx_mut(),
                     instr_len,
