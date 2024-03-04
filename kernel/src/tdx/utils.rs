@@ -6,8 +6,8 @@
 
 use super::error::TdxError;
 use super::tdcall::{
-    td_accept_memory, tdcall_vm_read, tdcall_vp_enter, tdcall_vp_invept, tdcall_vp_invvpid,
-    tdcall_vp_write, tdvmcall_mapgpa, tdvmcall_share_irte_hdr, TdcallArgs,
+    td_accept_memory, tdcall_mem_page_attr_wr, tdcall_vm_read, tdcall_vp_enter, tdcall_vp_invept,
+    tdcall_vp_invvpid, tdcall_vp_write, tdvmcall_mapgpa, tdvmcall_share_irte_hdr, TdcallArgs,
 };
 use crate::address::{Address, GuestPhysAddr, PhysAddr};
 use crate::cpu::percpu::this_cpu_mut;
@@ -305,4 +305,54 @@ pub fn td_share_irte_hdr(phys: PhysAddr, vm_id: TdpVmId) -> Result<(), TdxError>
         log::error!("share_irte_hdr failed {:?} e", e);
         TdxError::Sirte
     })
+}
+
+bitflags! {
+    // ABI FAS 4.8.5 GPA_ATTR: GPA Attributes
+    pub struct GPAAttr: u16 {
+        const R     = 1 << 0;
+        const W     = 1 << 1;
+        const Xs    = 1 << 2;
+        const Xu    = 1 << 3;
+        const VGP   = 1 << 4;
+        const PWA   = 1 << 5;
+        const SSS   = 1 << 6;
+        const SVE   = 1 << 7;
+        const Rev0  = 0x7f << 8;
+        const Valid = 1 << 15;
+    }
+}
+
+pub fn td_add_page_alias(
+    vm_id: TdpVmId,
+    gpa_mapping: u64,
+    gpa_attr: u16,
+    attr_flags: u16,
+) -> Result<(), TdxError> {
+    let gpa_attr = (gpa_attr as u64) << (vm_id.num() * 16);
+    let attr_flags = (attr_flags as u64) << (vm_id.num() * 16);
+    loop {
+        match tdcall_mem_page_attr_wr(gpa_mapping, gpa_attr, attr_flags) {
+            Ok(ret_gpa_attr) => {
+                if ret_gpa_attr == gpa_attr {
+                    break;
+                } else {
+                    // TDG.MEM.PAGE.ATTR.WR may return with page alias
+                    // not created due to missing L2 SEPT paging page
+                    // or host VMM is not able to add this page to L1
+                    // SEPT. Either case will make the returned gpa_attr
+                    // not the same with the original gpa_attr. To handle
+                    // this, L1 VMM should retry this tdcall until it is
+                    // success or enter some error.
+                    continue;
+                }
+            }
+            Err(e) => {
+                log::error!("mem_page_attr_wr failed {:x?}", e);
+                return Err(TdxError::MemPageAttrWr);
+            }
+        }
+    }
+
+    Ok(())
 }

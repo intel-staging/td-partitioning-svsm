@@ -26,6 +26,8 @@ pub enum TdxError {
     MapPrivate,
     // Failed to Map memory as shared
     MapShared,
+    // Mem page attr wr failed
+    MemPageAttrWr,
     // Accept memory related error
     PageAccept,
     // Read Guest Memory failed

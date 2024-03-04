@@ -6,10 +6,16 @@
 
 use super::error::{ErrExcp, TdxError};
 use super::gctx::GuestCpuGPRegCode;
+use super::gmem::accept_guest_mem;
 use super::percpu::{this_vcpu, this_vcpu_mut};
-use super::utils::{L2ExitInfo, TdpVmId};
+use super::utils::{td_add_page_alias, GPAAttr, L2ExitInfo, TdpVmId};
 use super::vcpu_comm::VcpuReqFlags;
 use super::vmcs_lib::{VMX_INT_INFO_ERR_CODE_VALID, VMX_INT_INFO_VALID};
+use crate::address::{Address, GuestPhysAddr};
+use crate::mm::address_space::is_kernel_phys_addr_valid;
+use crate::mm::guestmem::{gpa_is_shared, gpa_strip_c_bit};
+use crate::mm::memory::is_guest_phys_addr_valid;
+use crate::types::{PageSize, PAGE_SIZE, PAGE_SIZE_2M};
 
 #[derive(Copy, Clone, Debug)]
 pub enum VmExitReason {
@@ -19,6 +25,7 @@ pub enum VmExitReason {
     InterruptWindow,
     MsrRead,
     MsrWrite,
+    EptViolation { fault_gpa: GuestPhysAddr },
     UnSupported(u32),
 }
 
@@ -35,6 +42,9 @@ impl VmExitReason {
             7 => VmExitReason::InterruptWindow,
             31 => VmExitReason::MsrRead,
             32 => VmExitReason::MsrWrite,
+            48 => VmExitReason::EptViolation {
+                fault_gpa: GuestPhysAddr::from(l2exit_info.fault_gpa),
+            },
             _ => VmExitReason::UnSupported(exit_reason),
         }
     }
@@ -123,6 +133,62 @@ impl VmExit {
         })
     }
 
+    fn handle_page_alias(&self, gpa: GuestPhysAddr, size: PageSize) -> Result<bool, TdxError> {
+        let (shared, raw_gpa) = if gpa_is_shared(gpa) {
+            (true, gpa_strip_c_bit(gpa))
+        } else {
+            (false, gpa)
+        };
+
+        if !is_guest_phys_addr_valid(raw_gpa) {
+            if is_kernel_phys_addr_valid(raw_gpa.to_host_phys_addr()) {
+                log::error!(
+                    "Add alias for svsm phys addr 0x{:x}",
+                    raw_gpa.to_host_phys_addr()
+                );
+                return Err(TdxError::GuestFatalErr);
+            }
+
+            // Represent this is a guest MMIO
+            return Ok(false);
+        } else if shared {
+            // Host VMM can resume L1 instead of enter L2 if injecting
+            // interrupt to L1. In this case, L1 will see vmexits from
+            // L2. And if this vmexit is EPT_VIOLATION caused by L2 accessing
+            // shared GPA, then we can be here. So skip handling for
+            // shared GPA.
+            return Ok(true);
+        }
+
+        // set Read/Write/Execute_supervisor/Valid
+        let attr = (GPAAttr::R | GPAAttr::W | GPAAttr::Xs).bits();
+        let gpa_attr = attr | GPAAttr::Valid.bits();
+        let attr_flags = attr;
+        let (tdx_level, len) = match size {
+            PageSize::Regular => (0, PAGE_SIZE),
+            PageSize::Huge => (1, PAGE_SIZE_2M),
+        };
+
+        // Accept memory if has not been accepted
+        accept_guest_mem(gpa.page_align(), gpa.page_align() + len)?;
+
+        let gpa_mapping = (gpa.page_align().bits() as u64) | tdx_level;
+        td_add_page_alias(self.vm_id, gpa_mapping, gpa_attr, attr_flags)?;
+
+        Ok(true)
+    }
+
+    fn handle_ept_violation(&self, gpa: GuestPhysAddr) -> Result<(), TdxError> {
+        // Handle page alias first
+        if self.handle_page_alias(gpa, PageSize::Regular)? {
+            return Ok(());
+        }
+
+        //TODO: The EPT violation is caused by accessing virtual MMIO.
+        //Add MMIO emulation support.
+        panic!("MMIO emulation not supported yet");
+    }
+
     pub fn handle_vmexits(&self) -> Result<(), TdxError> {
         match self.reason {
             VmExitReason::ExceptionNMI {
@@ -134,6 +200,7 @@ impl VmExit {
             VmExitReason::InterruptWindow => self.handle_interrupt_window(),
             VmExitReason::MsrRead => self.handle_rdmsr()?,
             VmExitReason::MsrWrite => self.handle_wrmsr()?,
+            VmExitReason::EptViolation { fault_gpa } => self.handle_ept_violation(fault_gpa)?,
             VmExitReason::UnSupported(v) => {
                 log::error!("UnSupported VmExit Reason {}", v);
                 return Err(TdxError::InjectExcp(ErrExcp::UD));
