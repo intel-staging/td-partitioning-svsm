@@ -9,10 +9,12 @@ use super::percpu::this_vcpu;
 use super::utils::TdpVmId;
 use super::vcr::GuestCpuCrRegs;
 use super::vmcs::Vmcs;
-use super::vmcs_lib::{VmcsField16Guest, VmcsField32Guest, VmcsField64Guest};
+use super::vmcs_lib::{
+    VMCSGuestSegAttrFlags as AttrFlags, VmcsField16Guest, VmcsField32Guest, VmcsField64Guest,
+};
 use super::vmsr::GuestCpuMsrs;
 use crate::address::VirtAddr;
-use crate::cpu::control_regs::CR0Flags;
+use crate::cpu::control_regs::{CR0Flags, CR4Flags};
 use crate::locking::SpinLock;
 use crate::mm::address_space::virt_to_phys;
 use core::default::Default;
@@ -140,6 +142,13 @@ struct GuestCpuTdpContext {
     intr_status: u16,
 }
 
+#[derive(Copy, Clone, PartialEq)]
+pub enum SegmentType {
+    System,
+    Code,
+    Data,
+}
+
 #[derive(Copy, Clone)]
 pub struct Segment {
     pub selector: u16,
@@ -155,6 +164,40 @@ impl Segment {
             base,
             limit,
             attr,
+        }
+    }
+
+    pub fn is_data_writable(&self) -> bool {
+        let attr = AttrFlags::from_bits_truncate(self.attr);
+
+        if self.segtype() == SegmentType::Data {
+            attr.contains(AttrFlags::R_W)
+        } else {
+            false
+        }
+    }
+
+    pub fn is_code_readable(&self) -> bool {
+        let attr = AttrFlags::from_bits_truncate(self.attr);
+
+        if self.segtype() == SegmentType::Code {
+            attr.contains(AttrFlags::R_W)
+        } else {
+            false
+        }
+    }
+
+    pub fn segtype(&self) -> SegmentType {
+        let attr = AttrFlags::from_bits_truncate(self.attr);
+
+        if attr.contains(AttrFlags::S) {
+            if attr.contains(AttrFlags::C_D) {
+                SegmentType::Code
+            } else {
+                SegmentType::Data
+            }
+        } else {
+            SegmentType::System
         }
     }
 }
@@ -343,16 +386,22 @@ pub enum GuestCpuRegCode {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+pub enum PagingLevel {
+    Level4,
+    Level5,
+}
+
+#[derive(Clone, Copy, PartialEq)]
 pub enum GuestCpuMode {
     Real,
     Protected,
     Compatibility,
-    Bit64,
+    Bit64(PagingLevel),
 }
 
 impl GuestCpuMode {
     pub fn is_bit64(&self) -> bool {
-        matches!(self, GuestCpuMode::Bit64)
+        matches!(self, GuestCpuMode::Bit64(_))
     }
 }
 
@@ -594,7 +643,17 @@ impl GuestCpuContext {
             /* EFER.LMA = 1 */
             if (self.segs.cs.attr.read_cache() & 0x2000) != 0 {
                 // CS.L = 1 represents 64bit mode.
-                GuestCpuMode::Bit64
+                // While this sub-mode produces 64-bit linear addresses, the processor
+                // enforces canonicality, meaning that the upper bits of such an address
+                // are identical: bits 63:47 for 4-level paging and bits 63:56 for
+                // 5-level paging. 4-level paging (respectively, 5-level paging) does not
+                // use bits 63:48 (respectively, bits 63:57) of such addresses
+                let level = if (self.get_cr4() & CR4Flags::LA57.bits()) != 0 {
+                    PagingLevel::Level5
+                } else {
+                    PagingLevel::Level4
+                };
+                GuestCpuMode::Bit64(level)
             } else {
                 GuestCpuMode::Compatibility
             }

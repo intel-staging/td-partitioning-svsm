@@ -724,3 +724,17 @@ pub const VMX_INT_INFO_ERR_CODE_VALID: u32 = 1 << 11;
 pub const VMX_INTERRUPTABILITY_VCPU_BLOCKED_BY_NMI: u32 = 1 << 3;
 pub const VMX_INTERRUPTABILITY_VCPU_BLOCKED_BY_MOVSS: u32 = 1 << 1;
 pub const VMX_INTERRUPTABILITY_VCPU_BLOCKED_BY_STI: u32 = 1 << 0;
+
+bitflags::bitflags! {
+    pub struct VMCSGuestSegAttrFlags: u32 {
+        const A     = 1 << 0;
+        const R_W   = 1 << 1;
+        const C_E   = 1 << 2;
+        const C_D   = 1 << 3;
+        const S     = 1 << 4;
+        const AVL   = 1 << 12;
+        const L     = 1 << 13;
+        const DB    = 1 << 14;
+        const G     = 1 << 15;
+    }
+}

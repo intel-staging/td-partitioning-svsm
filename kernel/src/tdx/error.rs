@@ -17,6 +17,8 @@ pub enum ErrExcp {
 
 #[derive(Clone, Copy, Debug)]
 pub enum TdxError {
+    // Emulate Instruction related failure
+    EmulInstr,
     // IO emulation related failure
     IoEmul(IoType),
     // IO emulation is not supported

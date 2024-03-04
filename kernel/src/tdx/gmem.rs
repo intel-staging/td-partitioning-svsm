@@ -311,7 +311,6 @@ where
         })
 }
 
-#[allow(dead_code)]
 pub fn copy_to_gpa<T>(gpa: GuestPhysAddr, buf: T) -> Result<(), TdxError>
 where
     T: Sized + Copy,

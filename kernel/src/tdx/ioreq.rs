@@ -5,6 +5,7 @@
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
 use super::error::TdxError;
+use super::gmem::{copy_from_gpa, copy_to_gpa};
 use crate::address::GuestPhysAddr;
 use crate::mm::address_space::is_kernel_phys_addr_valid;
 use crate::mm::guestmem::gpa_is_shared;
@@ -17,6 +18,26 @@ pub enum AddrSize {
     TwoBytes,
     FourBytes = 4,
     EightBytes = 8,
+}
+
+pub fn copy_from_gpa_addrsize(gpa: GuestPhysAddr, size: AddrSize) -> Result<u64, TdxError> {
+    match size {
+        AddrSize::ZeroByte => Ok(0),
+        AddrSize::OneByte => Ok(copy_from_gpa::<u8>(gpa)? as u64),
+        AddrSize::TwoBytes => Ok(copy_from_gpa::<u16>(gpa)? as u64),
+        AddrSize::FourBytes => Ok(copy_from_gpa::<u32>(gpa)? as u64),
+        AddrSize::EightBytes => Ok(copy_from_gpa::<u64>(gpa)?),
+    }
+}
+
+pub fn copy_to_gpa_addrsize(gpa: GuestPhysAddr, size: AddrSize, val: u64) -> Result<(), TdxError> {
+    match size {
+        AddrSize::ZeroByte => Ok(()),
+        AddrSize::OneByte => copy_to_gpa::<u8>(gpa, val as u8),
+        AddrSize::TwoBytes => copy_to_gpa::<u16>(gpa, val as u16),
+        AddrSize::FourBytes => copy_to_gpa::<u32>(gpa, val as u32),
+        AddrSize::EightBytes => copy_to_gpa::<u64>(gpa, val),
+    }
 }
 
 impl AddrSize {
@@ -37,16 +58,42 @@ pub enum IoDirection {
     Write,
 }
 
-#[allow(dead_code)]
 #[derive(Copy, Clone, Debug)]
-struct IoOperation {
+pub struct IoOperation {
     io_dir: IoDirection,
     data: u64,
+    retry: bool,
 }
 
 impl IoOperation {
     fn new(io_dir: IoDirection) -> Self {
-        IoOperation { io_dir, data: 0 }
+        IoOperation {
+            io_dir,
+            data: 0,
+            retry: false,
+        }
+    }
+
+    pub fn is_read(&self) -> bool {
+        self.io_dir == IoDirection::Read
+    }
+
+    pub fn get_read_data(&self) -> Option<u64> {
+        if self.is_read() {
+            Some(self.data)
+        } else {
+            None
+        }
+    }
+
+    pub fn set_write_data(&mut self, val: u64) {
+        if !self.is_read() {
+            self.data = val;
+        }
+    }
+
+    pub fn set_retry(&mut self) {
+        self.retry = true;
     }
 }
 
