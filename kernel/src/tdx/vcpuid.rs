@@ -118,16 +118,32 @@ fn init_vcpuid_entry(leaf: u32, subleaf: Option<u32>) -> (VcpuidKey, CpuidResult
                 }
             }
             0x00000021 => {
-                // Signature "IntelTDP    "
-                let ebx = u32::from_le_bytes([b'I', b'n', b't', b'e']);
-                let edx = u32::from_le_bytes([b'l', b'T', b'D', b'P']);
-                let ecx = u32::from_le_bytes([b' ', b' ', b' ', b' ']);
+                if subleaf_val == 0 {
+                    // Signature "IntelTDX    "
+                    let ebx = u32::from_le_bytes([b'I', b'n', b't', b'e']);
+                    let edx = u32::from_le_bytes([b'l', b'T', b'D', b'X']);
+                    let ecx = u32::from_le_bytes([b' ', b' ', b' ', b' ']);
 
-                CpuidResult {
-                    eax: 0,
-                    ebx,
-                    ecx,
-                    edx,
+                    CpuidResult {
+                        eax: 1,
+                        ebx,
+                        ecx,
+                        edx,
+                    }
+                } else if subleaf_val == 1 {
+                    CpuidResult {
+                        eax: 0,
+                        ebx: 1,
+                        ecx: 0,
+                        edx: 0,
+                    }
+                } else {
+                    CpuidResult {
+                        eax: 0,
+                        ebx: 0,
+                        ecx: 0,
+                        edx: 0,
+                    }
                 }
             }
             0x40000001 => {
@@ -215,6 +231,12 @@ impl Vcpuid {
                 0x00000014 => continue,
                 0x0000001b => continue,
                 0x0000001f => continue,
+                0x00000021 => {
+                    let (key, entry) = init_vcpuid_entry(leaf, Some(0));
+                    entries.insert(key, entry);
+                    let (key, entry) = init_vcpuid_entry(leaf, Some(1));
+                    entries.insert(key, entry);
+                }
                 // The other CPU leavies are just reuse L1's VCPUID
                 _ => {
                     let (key, entry) = init_vcpuid_entry(leaf, None);
