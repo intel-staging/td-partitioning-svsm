@@ -506,6 +506,32 @@ impl VmExit {
             TdVmCallLeaf::Halt => {
                 self.handle_hlt(false);
             }
+            TdVmCallLeaf::MSRRead => {
+                let msr = ctx.get_gpreg(GuestCpuGPRegCode::R12) as u32;
+
+                match ctx.get_msrs().read(msr) {
+                    Ok(data) => {
+                        ctx.set_gpreg(GuestCpuGPRegCode::R11, data);
+                        ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_SUCCESS);
+                    }
+                    Err(e) => {
+                        log::error!("Failed to rdmsr 0x{:x}: err {:x?}", msr, e);
+                        ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_INVALID_OPERAND);
+                    }
+                }
+            }
+            TdVmCallLeaf::MSRWrite => {
+                let msr = ctx.get_gpreg(GuestCpuGPRegCode::R12) as u32;
+                let data = ctx.get_gpreg(GuestCpuGPRegCode::R13);
+
+                match ctx.get_msrs_mut().write(msr, data) {
+                    Ok(_) => ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_SUCCESS),
+                    Err(e) => {
+                        log::error!("Failed to wrmsr 0x{:x}: err {:x?}", msr, e);
+                        ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_INVALID_OPERAND);
+                    }
+                }
+            }
             TdVmCallLeaf::UnSupported => {
                 log::error!("Unsupported tdvmcall leaf 0x{:x}", leaf);
                 ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_INVALID_OPERAND);

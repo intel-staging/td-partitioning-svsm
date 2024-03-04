@@ -392,6 +392,8 @@ pub enum TdVmCallLeaf {
     MapGpa,
     Mmio,
     Halt,
+    MSRRead,
+    MSRWrite,
     UnSupported,
 }
 
@@ -401,6 +403,8 @@ impl From<u64> for TdVmCallLeaf {
             0x10001 => TdVmCallLeaf::MapGpa,
             0x30 => TdVmCallLeaf::Mmio,
             0x0c => TdVmCallLeaf::Halt,
+            0x1f => TdVmCallLeaf::MSRRead,
+            0x20 => TdVmCallLeaf::MSRWrite,
             _ => TdVmCallLeaf::UnSupported,
         }
     }
