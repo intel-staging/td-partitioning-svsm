@@ -7,6 +7,7 @@
 pub mod error;
 
 mod gctx;
+mod gmem;
 mod percpu;
 mod tdcall;
 mod tdp;

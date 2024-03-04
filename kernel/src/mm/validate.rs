@@ -145,20 +145,20 @@ enum ValidBitmapMem {
 }
 
 #[derive(Debug)]
-struct ValidBitmap {
+pub struct ValidBitmap {
     region: MemoryRegion<PhysAddr>,
     bitmap: Option<ValidBitmapMem>,
 }
 
 impl ValidBitmap {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         ValidBitmap {
             region: MemoryRegion::from_addresses(PhysAddr::null(), PhysAddr::null()),
             bitmap: None,
         }
     }
 
-    fn set_region(&mut self, region: MemoryRegion<PhysAddr>) {
+    pub fn set_region(&mut self, region: MemoryRegion<PhysAddr>) {
         self.region = region;
     }
 
@@ -169,14 +169,14 @@ impl ValidBitmap {
         self.bitmap = Some(ValidBitmapMem::Ptr(bitmap));
     }
 
-    fn set_bitmap_page_refs(&mut self, page_refs: Vec<PageRef>) {
+    pub fn set_bitmap_page_refs(&mut self, page_refs: Vec<PageRef>) {
         if page_refs.is_empty() {
             return;
         }
         self.bitmap = Some(ValidBitmapMem::PageRefs(page_refs));
     }
 
-    fn check_addr_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) -> bool {
+    pub fn check_addr_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) -> bool {
         check_addr_range(self.region, paddr_begin, paddr_end)
     }
 
@@ -207,7 +207,7 @@ impl ValidBitmap {
         bitmap_index(self.region, paddr)
     }
 
-    fn clear_all(&mut self) {
+    pub fn clear_all(&mut self) {
         let len = self.bitmap_len();
 
         if let Some(bitmap) = &mut self.bitmap {
@@ -426,12 +426,12 @@ impl ValidBitmap {
         Ok(())
     }
 
-    fn set_valid_range(&mut self, paddr_begin: PhysAddr, paddr_end: PhysAddr) {
+    pub fn set_valid_range(&mut self, paddr_begin: PhysAddr, paddr_end: PhysAddr) {
         self.modify_range(paddr_begin, paddr_end, BitmapOp::Set)
             .expect("ValidBitmap: Failed to set valid range");
     }
 
-    fn clear_valid_range(&mut self, paddr_begin: PhysAddr, paddr_end: PhysAddr) {
+    pub fn clear_valid_range(&mut self, paddr_begin: PhysAddr, paddr_end: PhysAddr) {
         self.modify_range(paddr_begin, paddr_end, BitmapOp::Clear)
             .expect("ValidBitmap: Failed to clear valid range");
     }
@@ -493,13 +493,11 @@ impl ValidBitmap {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn is_valid_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) -> bool {
         self.check_range(paddr_begin, paddr_end, BitmapOp::CheckValid)
             .is_ok()
     }
 
-    #[allow(dead_code)]
     pub fn is_invalid_range(&self, paddr_begin: PhysAddr, paddr_end: PhysAddr) -> bool {
         self.check_range(paddr_begin, paddr_end, BitmapOp::CheckInvalid)
             .is_ok()

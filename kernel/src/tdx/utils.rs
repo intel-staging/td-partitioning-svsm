@@ -5,7 +5,8 @@
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
 use super::error::TdxError;
-use super::tdcall::{tdcall_vm_read, tdcall_vp_write};
+use super::tdcall::{td_accept_memory, tdcall_vm_read, tdcall_vp_write, tdvmcall_mapgpa};
+use crate::address::{Address, GuestPhysAddr};
 use bitflags::bitflags;
 
 // According to TDP FAS 11.1 Introduction, a TD may contain up to 4 VMs.
@@ -123,4 +124,35 @@ pub fn build_tdg_field(
         | (write_mask << TDG_WRITE_MASK_SHIFT)
         | ((elem_size & TDG_ELEM_SIZE_MASK) << TDG_ELEM_SIZE_SHIFT)
         | (field & TDG_FIELD_MASK)
+}
+
+pub fn td_convert_guest_pages(
+    start: GuestPhysAddr,
+    end: GuestPhysAddr,
+    shared: bool,
+) -> Result<usize, TdxError> {
+    if !start.is_page_aligned() || !end.is_page_aligned() {
+        return Err(TdxError::UnalignedPhysAddr);
+    }
+
+    let start_hpa = start.to_host_phys_addr();
+    let end_hpa = end.to_host_phys_addr();
+
+    // No need to strip the shared bit from GuestPhysAddr as tdvmcall_mapgpa
+    // will do this according to the shared flag.
+    tdvmcall_mapgpa(shared, start_hpa.into(), end_hpa - start_hpa).map_err(|e| {
+        log::error!(
+            "Convert guest memory 0x{:x} ~ 0x{:x} failed: {:?}",
+            start,
+            end,
+            e
+        );
+        TdxError::MapGpa
+    })?;
+
+    if !shared {
+        td_accept_memory(u64::from(start_hpa), (end_hpa - start_hpa) as u64);
+    }
+
+    Ok(end_hpa - start_hpa)
 }

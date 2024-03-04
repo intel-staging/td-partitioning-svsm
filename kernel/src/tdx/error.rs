@@ -15,8 +15,14 @@ pub enum TdxError {
     InjectExcp(ErrExcp),
     // Invalid vm id
     InvalidVmId(u64),
+    // Map Gpa failed
+    MapGpa,
+    // Accept memory related error
+    PageAccept,
     // Tdp guest is not supported
     TdpNotSupport,
+    // Unaligned phys Address
+    UnalignedPhysAddr,
     // Vm read related error
     VmRD(u64),
     // Vp write related error
