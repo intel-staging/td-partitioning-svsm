@@ -57,6 +57,7 @@ union IrqEvent {
     irqchip: IrqChipEvent,
 }
 
+const IRQ_TYPE_IOAPIC: u32 = 1;
 const IRQ_TYPE_MSI: u32 = 2;
 #[repr(C)]
 struct SirtEntry {
@@ -181,6 +182,13 @@ impl Sirte {
                         !sirte.event.msi.mode.dest_mode(),
                         sirte.event.msi.mode.delivery_mode() as u32,
                         sirte.event.msi.vector,
+                    );
+                },
+                IRQ_TYPE_IOAPIC => unsafe {
+                    this_tdp(self.vm_id).get_vioapic().update_pinstate(
+                        sirte.event.irqchip.pin as usize,
+                        sirte.event.irqchip.level,
+                        sirte.event.irqchip.source_id,
                     );
                 },
                 _ => {

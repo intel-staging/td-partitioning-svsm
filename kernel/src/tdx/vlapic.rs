@@ -7,6 +7,7 @@
 use super::error::{ErrExcp, TdxError};
 use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::tdcall::tdvmcall_wrmsr;
+use super::tdp::this_tdp;
 use super::utils::TdpVmId;
 use super::vcpu::ResetMode;
 use super::vcpu_comm::VcpuReqFlags;
@@ -718,7 +719,10 @@ impl Vlapic {
             self.in_service_vec = self.find_highest_isr();
             self.update_ppr();
             if (self.get_reg(APIC_OFFSET_TMR0 + idx as u32 * 16) & vec_mask) != 0 {
-                //TODO: coordinate with vIOPAIC to handle level trigger interrupts
+                this_tdp(self.vm_id)
+                    .get_vioapic()
+                    .broadcast_eoi(self.in_service_vec)
+                    .expect("Failed to broadcase EOI");
             }
         }
     }

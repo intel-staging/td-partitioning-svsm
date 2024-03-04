@@ -19,6 +19,7 @@ mod vcpu;
 mod vcpu_comm;
 mod vcpuid;
 mod vcr;
+mod vioapic;
 mod vlapic;
 mod vmcs;
 mod vmcs_lib;

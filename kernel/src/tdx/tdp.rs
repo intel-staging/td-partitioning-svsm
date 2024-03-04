@@ -14,6 +14,7 @@ use super::utils::{td_num_l2_vms, TdpVmId, FIRST_VM_ID, MAX_NUM_L2_VMS};
 use super::vcpu::kick_vcpu;
 use super::vcpu_comm::VcpuCommBlock;
 use super::vcpuid::Vcpuid;
+use super::vioapic::Vioapic;
 use crate::cpu::interrupts::register_interrupt_handler;
 use crate::cpu::smp::get_nr_cpus;
 use crate::locking::RWLock;
@@ -30,6 +31,7 @@ pub struct Tdp {
     vcpuid: Vcpuid,
     vcpu_comms: RWLock<BTreeMap<u32, Arc<VcpuCommBlock>>>,
     sirte_vec: Option<u8>,
+    vioapic: Vioapic,
 }
 
 type Tdps = [OnceCell<Tdp>; MAX_NUM_L2_VMS];
@@ -48,6 +50,7 @@ impl Tdp {
             vcpuid: Vcpuid::new(),
             vcpu_comms: RWLock::new(BTreeMap::new()),
             sirte_vec: None,
+            vioapic: Vioapic::new(vm_id),
         }
     }
 
@@ -59,6 +62,7 @@ impl Tdp {
                 TdxError::Sirte
             })?,
         );
+        self.vioapic.init();
         Ok(())
     }
 
@@ -90,6 +94,10 @@ impl Tdp {
 
     pub fn get_vm_id(&self) -> TdpVmId {
         self.vm_id
+    }
+
+    pub fn get_vioapic(&self) -> &Vioapic {
+        &self.vioapic
     }
 }
 

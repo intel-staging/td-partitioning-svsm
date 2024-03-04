@@ -93,7 +93,7 @@ fn init_encrypt_mask() {
     MAX_PHYS_ADDR.reinit(&max_addr);
 }
 
-fn encrypt_mask() -> usize {
+pub fn encrypt_mask() -> usize {
     *ENCRYPT_MASK
 }
 
