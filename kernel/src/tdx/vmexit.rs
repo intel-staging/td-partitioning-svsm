@@ -483,6 +483,25 @@ impl VmExit {
                     }
                 }
             }
+            TdVmCallLeaf::Io => {
+                let size = ctx.get_gpreg(GuestCpuGPRegCode::R12) as usize;
+                let io_dir = if ctx.get_gpreg(GuestCpuGPRegCode::R13) == 0 {
+                    IoDirection::Read
+                } else {
+                    IoDirection::Write
+                };
+                let port = ctx.get_gpreg(GuestCpuGPRegCode::R14) as u16;
+
+                let mut io_req = IoReq::new(self.vm_id, IoType::TdvmcallPio { port, size }, io_dir);
+
+                match io_req.emulate() {
+                    Ok(_) => ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_SUCCESS),
+                    Err(e) => {
+                        log::error!("Failed to handle TDVMCALL PIO: {:x?}", e);
+                        ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_INVALID_OPERAND);
+                    }
+                }
+            }
             TdVmCallLeaf::Mmio => {
                 let size = ctx.get_gpreg(GuestCpuGPRegCode::R12) as usize;
                 let addr = GuestPhysAddr::from(ctx.get_gpreg(GuestCpuGPRegCode::R14));

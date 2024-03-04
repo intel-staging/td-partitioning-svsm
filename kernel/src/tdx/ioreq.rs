@@ -181,12 +181,12 @@ impl IoEmul for PioEmul {
     }
 }
 
-struct TdvmcallMmioEmul {
+struct TdvmcallIoEmul {
     ctx: &'static mut GuestCpuContext,
     size: AddrSize,
 }
 
-impl IoEmul for TdvmcallMmioEmul {
+impl IoEmul for TdvmcallIoEmul {
     fn emulate_read(&mut self, io_op: &mut IoOperation) -> Result<(), TdxError> {
         self.ctx.set_gpreg(GuestCpuGPRegCode::R11, io_op.data);
         Ok(())
@@ -219,6 +219,10 @@ pub enum IoType {
     StringPio {
         port: u16,
         instr_len: usize,
+    },
+    TdvmcallPio {
+        port: u16,
+        size: usize,
     },
 }
 
@@ -348,7 +352,7 @@ impl IoReq {
                 )?),
             ),
             IoType::TdvmcallMmio { addr, size } => {
-                let emul = TdvmcallMmioEmul {
+                let emul = TdvmcallIoEmul {
                     ctx: this_vcpu_mut(self.vm_id).get_ctx_mut(),
                     size: AddrSize::try_from(size)?,
                 };
@@ -368,6 +372,13 @@ impl IoReq {
                     instr_len,
                 )?),
             ),
+            IoType::TdvmcallPio { port, size } => {
+                let emul = TdvmcallIoEmul {
+                    ctx: this_vcpu_mut(self.vm_id).get_ctx_mut(),
+                    size: AddrSize::try_from(size)?,
+                };
+                self.emulate_pio(port, emul)
+            }
         }
     }
 
