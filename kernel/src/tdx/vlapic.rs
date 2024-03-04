@@ -1154,6 +1154,15 @@ impl Vlapic {
         let base = self.get_apicbase() & !((PAGE_SIZE - 1) as u64);
         (base, base + (PAGE_SIZE as u64))
     }
+
+    pub fn apic_id(&self) -> u32 {
+        let apic_id = self.get_reg(APIC_OFFSET_ID);
+        if self.is_x2apic() {
+            apic_id
+        } else {
+            apic_id >> APIC_ID_SHIFT
+        }
+    }
 }
 
 const DELMODE_FIXED: u32 = 0x0; // Delivery Mode: Fixed

@@ -96,6 +96,7 @@ bitflags! {
     pub struct MsrIa32MiscEnable: u64 {
         const EN_EIST       = 1 << 16;
         const EN_MONITOR    = 1 << 18;
+        const LIMIT_CPUID   = 1 << 22;
         const XD_DISABLE    = 1 << 34;
     }
 }

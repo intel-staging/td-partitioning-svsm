@@ -21,6 +21,7 @@ use crate::locking::RWLock;
 use crate::utils::immut_after_init::ImmutAfterInitCell;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::sync::Arc;
+use core::arch::x86_64::CpuidResult;
 use core::cell::OnceCell;
 use core::mem::MaybeUninit;
 
@@ -47,7 +48,7 @@ impl Tdp {
         Self {
             vm_id,
             bsp_apic_id: apic_id,
-            vcpuid: Vcpuid::new(),
+            vcpuid: Vcpuid::new(vm_id),
             vcpu_comms: RWLock::new(BTreeMap::new()),
             sirte_vec: None,
             vioapic: Vioapic::new(vm_id),
@@ -98,6 +99,10 @@ impl Tdp {
 
     pub fn get_vioapic(&self) -> &Vioapic {
         &self.vioapic
+    }
+
+    pub fn get_vcpuid(&self, leaf: u32, subleaf: u32) -> CpuidResult {
+        self.vcpuid.get(leaf, subleaf)
     }
 }
 

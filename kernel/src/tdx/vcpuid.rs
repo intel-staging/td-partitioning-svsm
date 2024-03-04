@@ -6,11 +6,15 @@
 
 extern crate alloc;
 
+use super::percpu::this_vcpu;
+use super::utils::TdpVmId;
 use super::vcr::get_cr4_reserved_mask;
-use crate::cpu::control_regs::CR4Flags;
+use crate::cpu::control_regs::{read_cr4, CR4Flags};
 use crate::cpu::cpuid::{
-    Cpuid06Eax, Cpuid06Ecx, Cpuid07_0Ebx, Cpuid07_0Ecx, Cpuid07_0Edx, Cpuid40000001Eax,
+    Cpuid01Ecx, Cpuid01Edx, Cpuid06Eax, Cpuid06Ecx, Cpuid07_0Ebx, Cpuid07_0Ecx, Cpuid07_0Edx,
+    Cpuid40000001Eax, Cpuid80000001Edx, CPUID01_EBX_APICID_MASK, CPUID01_EBX_APICID_SHIFT,
 };
+use crate::cpu::msr::{MsrIa32MiscEnable, MSR_IA32_MISC_ENABLE};
 use alloc::collections::btree_map::BTreeMap;
 use core::arch::x86_64::{CpuidResult, __cpuid_count};
 use core::cmp::{Ord, Ordering};
@@ -139,6 +143,7 @@ fn init_vcpuid_entry(leaf: u32, subleaf: Option<u32>) -> (VcpuidKey, CpuidResult
 
 #[derive(Debug)]
 pub struct Vcpuid {
+    vm_id: TdpVmId,
     entries: BTreeMap<VcpuidKey, CpuidResult>,
     vcpuid_level: u32,
     vcpuid_xlevel: u32,
@@ -152,8 +157,9 @@ fn is_percpu_related(leaf: u32) -> bool {
 }
 
 impl Vcpuid {
-    pub fn new() -> Self {
+    pub fn new(vm_id: TdpVmId) -> Self {
         Self {
+            vm_id,
             entries: BTreeMap::new(),
             vcpuid_level: 0,
             vcpuid_xlevel: 0,
@@ -236,6 +242,197 @@ impl Vcpuid {
         for leaf in 0x80000002..=self.vcpuid_xlevel {
             let (key, entry) = init_vcpuid_entry(leaf, None);
             entries.insert(key, entry);
+        }
+    }
+
+    fn lookup_vcpuid_entries(&self, leaf: u32, subleaf: u32) -> Option<&CpuidResult> {
+        let key = VcpuidKey::new(leaf, Some(subleaf));
+        self.entries.get(&key)
+    }
+
+    fn find_vcpuid_entry(&self, leaf: u32, subleaf: u32) -> Option<&CpuidResult> {
+        self.lookup_vcpuid_entries(leaf, subleaf).map_or_else(
+            || {
+                let limit = if (leaf & 0x80000000) != 0 {
+                    self.vcpuid_xlevel
+                } else {
+                    self.vcpuid_level
+                };
+
+                //SDM Vol. 2A - Instruction Set Reference - CPUID
+                //If a value entered for CPUID.EAX is higher than
+                //the maximum input value for basic or extended
+                //function for that processor then the data for the
+                //highest basic information leaf is returned
+                if leaf > limit {
+                    self.lookup_vcpuid_entries(self.vcpuid_level, subleaf)
+                } else {
+                    None
+                }
+            },
+            Some,
+        )
+    }
+
+    fn get_vcpuid_01h(&self, subleaf: u32) -> Option<CpuidResult> {
+        let cr4_reserved_mask = CR4Flags::from_bits_truncate(get_cr4_reserved_mask());
+        let mut vcpuid = unsafe { __cpuid_count(0x00000001, subleaf) };
+
+        // Patch with XAPIC ID
+        let apicid = this_vcpu(self.vm_id).get_vlapic().apic_id();
+        vcpuid.ebx &= !CPUID01_EBX_APICID_MASK;
+        vcpuid.ebx |= apicid << CPUID01_EBX_APICID_SHIFT;
+
+        if (vcpuid.ecx & Cpuid01Ecx::XSAVE.bits()) != 0
+            && (this_vcpu(self.vm_id).get_ctx().get_cr4() & CR4Flags::OSXSAVE.bits()) != 0
+        {
+            vcpuid.ecx |= Cpuid01Ecx::OSXSAVE.bits();
+        }
+
+        // Mask SDBG for silicon debug
+        vcpuid.ecx &= !Cpuid01Ecx::SDBG.bits();
+        // Mask PDCM: Perfmon and Debug Capability
+        vcpuid.ecx &= !Cpuid01Ecx::PDCM.bits();
+
+        // Mask Debug Store
+        vcpuid.ecx &= !(Cpuid01Ecx::DTES64 | Cpuid01Ecx::DS_CPL).bits();
+        vcpuid.edx &= !Cpuid01Edx::DTES.bits();
+
+        let misc = MsrIa32MiscEnable::from_bits_truncate(
+            this_vcpu(self.vm_id)
+                .get_ctx()
+                .get_msrs()
+                .read(MSR_IA32_MISC_ENABLE)
+                .unwrap(),
+        );
+        if !misc.contains(MsrIa32MiscEnable::EN_EIST) {
+            vcpuid.ecx &= !Cpuid01Ecx::EIST.bits();
+        }
+
+        if cr4_reserved_mask.contains(CR4Flags::PCIDE) {
+            vcpuid.ecx &= !Cpuid01Ecx::PCID.bits();
+        }
+
+        if cr4_reserved_mask.contains(CR4Flags::VME) {
+            vcpuid.edx &= !Cpuid01Edx::VME.bits();
+        }
+
+        if cr4_reserved_mask.contains(CR4Flags::DE) {
+            vcpuid.edx &= !Cpuid01Edx::DE.bits();
+        }
+
+        if cr4_reserved_mask.contains(CR4Flags::PSE) {
+            vcpuid.edx &= !Cpuid01Edx::PSE.bits();
+        }
+
+        if cr4_reserved_mask.contains(CR4Flags::PAE) {
+            vcpuid.edx &= !Cpuid01Edx::PAE.bits();
+        }
+
+        if cr4_reserved_mask.contains(CR4Flags::PGE) {
+            vcpuid.edx &= !Cpuid01Edx::PGE.bits();
+        }
+
+        if cr4_reserved_mask.contains(CR4Flags::OSFXSR) {
+            vcpuid.edx &= !Cpuid01Edx::FXSR.bits();
+        }
+
+        Some(vcpuid)
+    }
+
+    fn get_vcpuid_0bh(&self, subleaf: u32) -> Option<CpuidResult> {
+        let mut vcpuid = unsafe { __cpuid_count(0x0000000b, subleaf) };
+
+        // Patch with X2APIC ID
+        vcpuid.edx = this_vcpu(self.vm_id).get_vlapic().apic_id();
+
+        Some(vcpuid)
+    }
+
+    fn get_vcpuid_0dh(&self, subleaf: u32) -> Option<CpuidResult> {
+        let cr4 = read_cr4();
+        if cr4.contains(CR4Flags::OSXSAVE) {
+            Some(unsafe { __cpuid_count(0x0000000d, subleaf) })
+        } else {
+            None
+        }
+    }
+
+    fn get_vcpuid_19h(&self, _subleaf: u32) -> Option<CpuidResult> {
+        // Not support
+        None
+    }
+
+    fn get_vcpuid_80000001h(&self, subleaf: u32) -> Option<CpuidResult> {
+        if let Some(e) = self.find_vcpuid_entry(0x80000000, subleaf) {
+            if e.eax >= 0x80000001 {
+                let mut vcpuid = unsafe { __cpuid_count(0x80000001, subleaf) };
+                let vmsr = MsrIa32MiscEnable::from_bits_truncate(
+                    this_vcpu(self.vm_id)
+                        .get_ctx()
+                        .get_msrs()
+                        .read(MSR_IA32_MISC_ENABLE)
+                        .unwrap(),
+                );
+                if vmsr.contains(MsrIa32MiscEnable::XD_DISABLE) {
+                    vcpuid.edx &= !Cpuid80000001Edx::NX.bits();
+                }
+                Some(vcpuid)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn limit_vcpuid(&self, leaf: u32, src: CpuidResult) -> CpuidResult {
+        let vmsr = MsrIa32MiscEnable::from_bits_truncate(
+            this_vcpu(self.vm_id)
+                .get_ctx()
+                .get_msrs()
+                .read(MSR_IA32_MISC_ENABLE)
+                .unwrap(),
+        );
+        let mut vcpuid = src;
+
+        if vmsr.contains(MsrIa32MiscEnable::LIMIT_CPUID) {
+            if leaf == 0x00000000 {
+                vcpuid.eax = 2;
+            } else if leaf > 0x00000002 {
+                vcpuid.eax = 0;
+                vcpuid.ebx = 0;
+                vcpuid.ecx = 0;
+                vcpuid.edx = 0;
+            }
+        }
+
+        vcpuid
+    }
+
+    pub fn get(&self, leaf: u32, subleaf: u32) -> CpuidResult {
+        let cpuid = if is_percpu_related(leaf) {
+            match leaf {
+                0x00000001 => self.get_vcpuid_01h(subleaf),
+                0x0000000b => self.get_vcpuid_0bh(subleaf),
+                0x0000000d => self.get_vcpuid_0dh(subleaf),
+                0x00000019 => self.get_vcpuid_19h(subleaf),
+                0x80000001 => self.get_vcpuid_80000001h(subleaf),
+                _ => Some(unsafe { __cpuid_count(leaf, subleaf) }),
+            }
+        } else {
+            self.find_vcpuid_entry(leaf, subleaf).copied()
+        };
+
+        if let Some(v) = cpuid {
+            self.limit_vcpuid(leaf, v)
+        } else {
+            CpuidResult {
+                eax: 0,
+                ebx: 0,
+                ecx: 0,
+                edx: 0,
+            }
         }
     }
 }

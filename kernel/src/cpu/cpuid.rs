@@ -110,6 +110,9 @@ pub fn dump_cpuid_table() {
     }
 }
 
+pub const CPUID01_EBX_APICID_MASK: u32 = 0xff000000;
+pub const CPUID01_EBX_APICID_SHIFT: u32 = 24;
+
 bitflags! {
     #[derive(Copy, Clone, Debug)]
     pub struct Cpuid01Ecx: u32 {
