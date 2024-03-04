@@ -13,6 +13,7 @@ bitflags! {
         const EN_X2APICV        = 1 << 0;
         const VTIMER            = 1 << 1;
         const SIRTE             = 1 << 2;
+        const INJ_NMI           = 1 << 3;
     }
 }
 

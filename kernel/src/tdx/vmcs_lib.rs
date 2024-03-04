@@ -711,3 +711,12 @@ bitflags! {
         const LOAD_CET_STATE                = 1 << 20;
     }
 }
+
+// VMX Interrupt info
+pub const VMX_INT_INFO_VALID: u32 = 1 << 31;
+pub const VMX_INT_TYPE_NMI: u32 = 2 << 8;
+
+// VMX Interruptability info
+pub const VMX_INTERRUPTABILITY_VCPU_BLOCKED_BY_NMI: u32 = 1 << 3;
+pub const VMX_INTERRUPTABILITY_VCPU_BLOCKED_BY_MOVSS: u32 = 1 << 1;
+pub const VMX_INTERRUPTABILITY_VCPU_BLOCKED_BY_STI: u32 = 1 << 0;

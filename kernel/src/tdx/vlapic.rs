@@ -825,7 +825,9 @@ impl Vlapic {
             if mode == APIC_DELMODE_FIXED {
                 self.set_intr(vec, false);
             } else if mode == APIC_DELMODE_NMI {
-                //TODO: request to inject NMI
+                this_vcpu(self.vm_id)
+                    .get_cb()
+                    .make_request(VcpuReqFlags::INJ_NMI);
             } else {
                 log::warn!("vlapic: unsupported deliver mode 0x{:x}", mode);
             }

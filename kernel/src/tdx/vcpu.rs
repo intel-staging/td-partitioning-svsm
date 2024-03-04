@@ -13,6 +13,7 @@ use super::tdcall::tdvmcall_sti_halt;
 use super::tdp::this_tdp;
 use super::utils::{td_flush_vpid_global, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet};
 use super::vcpu_comm::{VcpuCommBlock, VcpuReqFlags};
+use super::virq::Virq;
 use super::vlapic::Vlapic;
 use super::vmcs::Vmcs;
 use super::vmcs_lib::VmcsField32ReadOnly;
@@ -64,6 +65,7 @@ pub struct Vcpu {
     ctx: GuestCpuContext,
     cb: Arc<VcpuCommBlock>,
     vlapic: Vlapic,
+    virq: Virq,
 }
 
 impl Vcpu {
@@ -75,6 +77,7 @@ impl Vcpu {
         self.vmcs.init(vm_id, apic_id);
         self.ctx.init(vm_id);
         self.vlapic.init(vm_id, apic_id, is_bsp);
+        self.virq.init(vm_id);
         let cb = Arc::new(VcpuCommBlock::new(apic_id));
         this_tdp(vm_id).register_vcpu_cb(cb.clone());
         unsafe { core::ptr::write(core::ptr::addr_of_mut!(self.cb), cb) };
@@ -220,6 +223,7 @@ impl Vcpu {
     fn reset(&mut self, mode: ResetMode) {
         self.ctx.reset();
         self.vlapic.reset(mode);
+        self.virq.reset();
     }
 
     fn configure_vmcs(&mut self) {
@@ -249,6 +253,16 @@ impl Vcpu {
 
         if self.cb.test_and_clear_request(VcpuReqFlags::SIRTE) {
             this_sirte_mut(self.vm_id).handle_sirte();
+        }
+
+        if self.cb.test_and_clear_request(VcpuReqFlags::INJ_NMI) && !self.virq.inject_nmi() {
+            // NMI not injected, set the INJ_NMI request again
+            self.cb.make_request(VcpuReqFlags::INJ_NMI);
+        }
+
+        if self.cb.has_request(VcpuReqFlags::INJ_NMI) {
+            // Enable IRQ windown if there is pending event not injected
+            self.vmcs.enable_irq_window();
         }
     }
 
