@@ -9,7 +9,9 @@ use super::tdcall::{
     td_accept_memory, tdcall_vm_read, tdcall_vp_enter, tdcall_vp_invept, tdcall_vp_invvpid,
     tdcall_vp_write, tdvmcall_mapgpa, TdcallArgs,
 };
-use crate::address::{Address, GuestPhysAddr};
+use crate::address::{Address, GuestPhysAddr, PhysAddr};
+use crate::cpu::percpu::this_cpu_mut;
+use crate::mm::phys_to_virt;
 use crate::types::PAGE_SIZE;
 use bitflags::bitflags;
 
@@ -251,4 +253,50 @@ pub fn td_vp_enter(vm_id: TdpVmId, ctx_pa: u64) -> VpEnterRet {
         TDX_PENDING_INTERRUPT => VpEnterRet::NoL2Enter,
         _ => VpEnterRet::Error(ret.rax as u32, (ret.rax >> 32) as u32),
     }
+}
+
+#[allow(dead_code)]
+pub fn td_convert_kernel_pages(
+    start: PhysAddr,
+    end: PhysAddr,
+    shared: bool,
+) -> Result<usize, TdxError> {
+    if !start.is_page_aligned() || !end.is_page_aligned() {
+        return Err(TdxError::UnalignedPhysAddr);
+    }
+
+    // No need to strip the shared bit from PhysAddr as tdvmcall_mapgpa
+    // will do this according to the shared flag.
+    tdvmcall_mapgpa(shared, start.into(), end - start).map_err(|e| {
+        log::error!(
+            "Convert svsm memory 0x{:x} ~ 0x{:x} failed: {:?}",
+            start,
+            end,
+            e
+        );
+        TdxError::MapGpa
+    })?;
+
+    let pages = (end - start) / PAGE_SIZE;
+
+    for i in 0..pages {
+        let vaddr = phys_to_virt(start + i * PAGE_SIZE);
+        if shared {
+            this_cpu_mut()
+                .get_pgtable()
+                .set_shared_4k(vaddr)
+                .map_err(|_| TdxError::MapShared)?;
+        } else {
+            this_cpu_mut()
+                .get_pgtable()
+                .set_encrypted_4k(vaddr)
+                .map_err(|_| TdxError::MapPrivate)?;
+        }
+    }
+
+    if !shared {
+        td_accept_memory(u64::from(start), (end - start) as u64);
+    }
+
+    Ok(end - start)
 }

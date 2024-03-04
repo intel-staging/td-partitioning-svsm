@@ -18,6 +18,10 @@ pub enum TdxError {
     InvalidVmId(u64),
     // Map Gpa failed
     MapGpa,
+    // Failed to Map memory as private
+    MapPrivate,
+    // Failed to Map memory as shared
+    MapShared,
     // Accept memory related error
     PageAccept,
     // Read Guest Memory failed
