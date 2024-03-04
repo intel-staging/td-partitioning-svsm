@@ -499,19 +499,30 @@ pub fn tdcall_get_ve_info() -> Result<TdVeInfo, TdCallError> {
 ///
 /// Details can be found in TDX Module ABI spec section 'TDG.MEM.PAGE.Accept Leaf'
 pub fn tdcall_accept_page(address: u64) -> Result<(), TdCallError> {
-    let mut args = TdcallArgs {
-        rax: TDCALL_TDACCEPTPAGE,
-        rcx: address,
-        ..Default::default()
-    };
-
-    let ret = td_call(&mut args);
-
-    if ret != TDCALL_STATUS_SUCCESS {
-        return Err(ret.into());
+    let mut retry = 0u32;
+    loop {
+        let mut args = TdcallArgs {
+            rax: TDCALL_TDACCEPTPAGE,
+            rcx: address,
+            ..Default::default()
+        };
+        let ret = td_call(&mut args);
+        match ret {
+            TDCALL_STATUS_SUCCESS => return Ok(()),
+            TDCALL_STATUS_OPERAND_BUSY => {
+                if {
+                    retry += 1;
+                    retry
+                } > TDCALL_ACCEPTPAGE_MAX_RETRY
+                {
+                    return Err(ret.into());
+                } else {
+                    continue;
+                }
+            }
+            _ => return Err(ret.into()),
+        }
     }
-
-    Ok(())
 }
 
 fn td_accept_pages(address: u64, pages: u64, page_size: u64) {
@@ -532,8 +543,8 @@ fn td_accept_pages(address: u64, pages: u64, page_size: u64) {
                     }
                 }
                 panic!(
-                    "Accept Page Error: 0x{:x}, page_size: {}\n",
-                    accept_addr, page_size
+                    "Accept Page Error: 0x{:x}, page_size: {}, err {:?}\n",
+                    accept_addr, page_size, e
                 );
             }
         }
