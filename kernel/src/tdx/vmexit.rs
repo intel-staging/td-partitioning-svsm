@@ -235,13 +235,15 @@ impl VmExit {
         self.skip_instruction();
     }
 
-    fn handle_hlt(&self) {
+    fn handle_hlt(&self, skip_ins: bool) {
         disable_irq();
         if !this_vcpu(self.vm_id).has_pending_events() {
             tdvmcall_sti_halt();
         }
         enable_irq();
-        self.skip_instruction();
+        if skip_ins {
+            self.skip_instruction();
+        }
     }
 
     fn handle_vmcall(&self, cpl: u8) -> Result<(), TdxError> {
@@ -501,6 +503,9 @@ impl VmExit {
                     }
                 }
             }
+            TdVmCallLeaf::Halt => {
+                self.handle_hlt(false);
+            }
             TdVmCallLeaf::UnSupported => {
                 log::error!("Unsupported tdvmcall leaf 0x{:x}", leaf);
                 ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_INVALID_OPERAND);
@@ -594,7 +599,7 @@ impl VmExit {
             VmExitReason::InitSignal => self.handle_init_signal(),
             VmExitReason::InterruptWindow => self.handle_interrupt_window(),
             VmExitReason::Cpuid => self.handle_cpuid(),
-            VmExitReason::Hlt => self.handle_hlt(),
+            VmExitReason::Hlt => self.handle_hlt(true),
             VmExitReason::Vmcall { cpl } => self.handle_vmcall(cpl)?,
             VmExitReason::CrAccess { access_type } => self.handle_cr(access_type)?,
             VmExitReason::IoInstruction {
