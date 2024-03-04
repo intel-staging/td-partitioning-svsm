@@ -34,12 +34,68 @@ pub enum VcpuStateReq {
     Sipi { entry: u64 },
 }
 
+#[derive(Debug, Default)]
+pub struct VirqBitmap {
+    vec: [AtomicU64; 4],
+    level: [AtomicU64; 4],
+}
+
+impl VirqBitmap {
+    fn new() -> Self {
+        Self {
+            vec: [
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+            ],
+            level: [
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+            ],
+        }
+    }
+
+    fn set(&self, vec: u8, level: bool) {
+        let (idx, bitpos) = ((vec / 64) as usize, vec % 64);
+
+        if level {
+            self.level[idx].fetch_or(1u64 << bitpos, Ordering::AcqRel);
+        } else {
+            self.level[idx].fetch_and(!(1u64 << bitpos), Ordering::AcqRel);
+        }
+
+        self.vec[idx].fetch_or(1u64 << bitpos, Ordering::AcqRel);
+    }
+
+    fn get_highest(&self) -> Option<(u8, bool)> {
+        for i in (0..4).rev() {
+            let val = self.vec[i].load(Ordering::Acquire);
+            if val != 0 {
+                let bitpos = (63 - val.leading_zeros()) as usize;
+                let vec_bits = 1u64 << bitpos;
+                // Clear the vec bit
+                self.vec[i].fetch_and(!vec_bits, Ordering::AcqRel);
+                return Some((
+                    (64 * i + bitpos) as u8,
+                    (self.level[i].load(Ordering::Acquire) & vec_bits) != 0,
+                ));
+            }
+        }
+
+        None
+    }
+}
+
 #[derive(Debug)]
 pub struct VcpuCommBlock {
     pub apic_id: u32,
     pub vlapic: Arc<dyn VlapicRegsRead>,
     pending_req: AtomicU64,
     pending_state: SpinLock<VecDeque<VcpuState>>,
+    pending_virq: VirqBitmap,
 }
 
 impl VcpuCommBlock {
@@ -49,6 +105,7 @@ impl VcpuCommBlock {
             vlapic,
             pending_req: AtomicU64::new(0),
             pending_state: SpinLock::new(VecDeque::new()),
+            pending_virq: VirqBitmap::new(),
         }
     }
 
@@ -93,5 +150,14 @@ impl VcpuCommBlock {
 
     pub fn get_pending_state(&self) -> Option<VcpuState> {
         self.pending_state.lock().pop_front()
+    }
+
+    pub fn make_pending_virq(&self, vec: u8, level: bool) {
+        self.pending_virq.set(vec, level);
+        self.make_request(VcpuReqFlags::REQ_EVENT);
+    }
+
+    pub fn get_pending_virq(&self) -> Option<(u8, bool)> {
+        self.pending_virq.get_highest()
     }
 }

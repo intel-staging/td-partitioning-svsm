@@ -4,10 +4,12 @@
 //
 // Author: Jason CJ Chen <jason.cj.chen@intel.com>
 
+extern crate alloc;
+
 use super::error::TdxError;
 use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::utils::TdpVmId;
-use super::vcpu_comm::VcpuReqFlags;
+use super::vcpu_comm::{VcpuCommBlock, VcpuReqFlags};
 use super::vlapic::Vlapic;
 use super::vmcs_lib::{
     VmcsField32Control, VmcsField32Guest, VMX_INTERRUPTABILITY_VCPU_BLOCKED_BY_MOVSS,
@@ -20,6 +22,7 @@ use crate::cpu::idt::common::{
     BP_VECTOR, DF_VECTOR, NMI_VECTOR, OF_VECTOR, PF_VECTOR,
 };
 use crate::cpu::registers::RFlags;
+use alloc::sync::Arc;
 
 fn exception_is_soft(vec: u8) -> bool {
     vec as usize == BP_VECTOR || vec as usize == OF_VECTOR
@@ -84,7 +87,13 @@ impl Virq {
                 == 0
     }
 
-    pub fn inject_intr(&self, vlapic: &mut Vlapic) {
+    pub fn inject_intr(&self, vlapic: &mut Vlapic, cb: &Arc<VcpuCommBlock>) {
+        // Get all the pending virq from VcpuCommBlock and synced to
+        // vlapic and then inject interrupt.
+        while let Some((vec, level)) = cb.get_pending_virq() {
+            vlapic.set_intr(vec, level);
+        }
+
         vlapic.inject_intr(self.is_guest_irq_enabled(), self.injected);
     }
 

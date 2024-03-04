@@ -976,7 +976,7 @@ impl Vlapic {
         }
     }
 
-    fn set_intr(&mut self, vector: u8, level: bool) {
+    pub fn set_intr(&mut self, vector: u8, level: bool) {
         if vector < 16 {
             self.set_error(APIC_ESR_RECEIVE_ILLEGAL_VECTOR);
         } else {
@@ -1005,13 +1005,7 @@ impl Vlapic {
             let cbs = vlapic_calc_dest(self.vm_id, shorthand, is_broadcast, dest, phys, false);
             for cb in cbs {
                 match mode {
-                    APIC_DELMODE_FIXED => {
-                        if cb.apic_id == self.apic_id {
-                            self.set_intr(vec, false);
-                        } else {
-                            // TODO: inject interrupt to remote vcpu
-                        }
-                    }
+                    APIC_DELMODE_FIXED => cb.make_pending_virq(vec, false),
                     APIC_DELMODE_NMI => cb.make_request(VcpuReqFlags::INJ_NMI),
                     APIC_DELMODE_INIT => {
                         if cb.apic_id == self.apic_id {
@@ -1405,16 +1399,16 @@ const DELMODE_LOPRI: u32 = 0x1; // Delivery Mode: Lowest priority
 pub fn vlapic_receive_intr(
     vm_id: TdpVmId,
     level: bool,
-    _dest: u32,
-    _phys: bool,
+    dest: u32,
+    phys: bool,
     delmode: u32,
     vector: u8,
 ) {
     assert!(vector >= FIRST_DYNAMIC_VECTOR);
     assert!(delmode == DELMODE_FIXED || delmode == DELMODE_LOPRI);
-    //TODO: currently only working on UP. Extend with destination calculation
-    //to support SMP
-    this_vcpu_mut(vm_id)
-        .get_vlapic_mut()
-        .set_intr(vector, level);
+    let lowprio = delmode == DELMODE_LOPRI;
+    let cbs = vlapic_calc_dest_noshort(vm_id, false, dest, phys, lowprio);
+    for cb in cbs {
+        cb.make_pending_virq(vector, level);
+    }
 }

@@ -345,7 +345,7 @@ impl Vcpu {
 
         // Handle interrupt event after nmi/exceptions
         if self.cb.test_and_clear_request(VcpuReqFlags::REQ_EVENT) {
-            self.virq.inject_intr(&mut self.vlapic);
+            self.virq.inject_intr(&mut self.vlapic, &self.cb);
         }
 
         if self.cb.has_request(VcpuReqFlags::INJ_NMI) || self.vlapic.has_pending_delivery_intr() {
