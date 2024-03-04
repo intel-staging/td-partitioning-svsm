@@ -427,6 +427,10 @@ impl GuestCpuContext {
         self.tdp_ctx.rflags
     }
 
+    pub fn set_rflags(&mut self, val: u64) {
+        self.tdp_ctx.rflags = val;
+    }
+
     pub fn pre_vmentry(&mut self) -> u64 {
         // load ia32_efer if updated
         self.ia32_efer.sync_cache();

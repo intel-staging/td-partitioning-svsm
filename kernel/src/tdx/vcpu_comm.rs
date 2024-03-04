@@ -15,6 +15,8 @@ bitflags! {
         const SIRTE             = 1 << 2;
         const INJ_NMI           = 1 << 3;
         const REQ_EVENT         = 1 << 4;
+        const INJ_EXCP          = 1 << 5;
+        const TRPFAULT          = 1 << 6;
     }
 }
 

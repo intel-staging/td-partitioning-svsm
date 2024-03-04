@@ -12,8 +12,12 @@ pub enum ErrExcp {
 
 #[derive(Clone, Copy, Debug)]
 pub enum TdxError {
+    // Guest fatal Error like triple fault
+    GuestFatalErr,
     // Require to inject exception to Guest
     InjectExcp(ErrExcp),
+    // Invalid vector
+    InvalidVector,
     // Invalid vm id
     InvalidVmId(u64),
     // Map Gpa failed
