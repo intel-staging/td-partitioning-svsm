@@ -12,7 +12,7 @@ use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::tdcall::{tdcall_get_td_info, tdvmcall_sti_halt};
 use super::tdp::this_tdp;
 use super::utils::{
-    td_add_page_alias, GPAAttr, L2ExitInfo, TdCallLeaf, TdVmCallLeaf, TdpVmId,
+    td_add_page_alias, GPAAttr, L2ExitInfo, TdCallLeaf, TdVmCallLeaf, TdpVmId, TDCS_NOTIFY_ENABLES,
     TDG_VP_VMCALL_INVALID_OPERAND, TDG_VP_VMCALL_RETRY, TDG_VP_VMCALL_SUCCESS, TDX_OPERAND_INVALID,
     TDX_SUCCESS,
 };
@@ -545,6 +545,19 @@ impl VmExit {
         let ret = match tdcall {
             TdCallLeaf::TdgVpVmcall => return self.handle_tdg_vp_vmcall(ctx),
             TdCallLeaf::TdgVpInfo => self.handle_tdg_vp_info(ctx),
+            TdCallLeaf::TdgVmWr => {
+                let rcx = ctx.get_gpreg(GuestCpuGPRegCode::Rcx);
+                let rdx = ctx.get_gpreg(GuestCpuGPRegCode::Rdx);
+
+                if (rcx == 0) && (rdx == TDCS_NOTIFY_ENABLES) {
+                    // TODO: shall we enable TDCS_NOTIFY_ENABLES from L1?
+                    log::warn!("Ignore TDCS_NOTIFY_ENABLES setting from L2");
+                    TDX_SUCCESS
+                } else {
+                    log::error!("Unsupported tdcall for VM_WR");
+                    TDX_OPERAND_INVALID
+                }
+            }
             TdCallLeaf::UnSupported => {
                 log::error!("Unsupported tdcall leaf {}", leaf);
                 TDX_OPERAND_INVALID
