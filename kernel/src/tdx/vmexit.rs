@@ -7,6 +7,7 @@
 use super::error::{ErrExcp, TdxError};
 use super::gctx::GuestCpuGPRegCode;
 use super::gmem::accept_guest_mem;
+use super::ioreq::{IoDirection, IoReq, IoType};
 use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::utils::{td_add_page_alias, GPAAttr, L2ExitInfo, TdpVmId};
 use super::vcpu_comm::VcpuReqFlags;
@@ -17,15 +18,35 @@ use crate::mm::guestmem::{gpa_is_shared, gpa_strip_c_bit};
 use crate::mm::memory::is_guest_phys_addr_valid;
 use crate::types::{PageSize, PAGE_SIZE, PAGE_SIZE_2M};
 
+bitflags::bitflags! {
+    #[derive(Copy, Clone, Debug)]
+    pub struct EPTViolationQualFlags: u64 {
+        const R     = 1 << 0;
+        const W     = 1 << 1;
+        const X     = 1 << 2;
+        const RA    = 1 << 3;
+        const WA    = 1 << 4;
+        const XA    = 1 << 5;
+        const GLA   = 1 << 7;
+        const TRAN  = 1 << 8;
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub enum VmExitReason {
-    ExceptionNMI { intr_info: u32, intr_errcode: u32 },
+    ExceptionNMI {
+        intr_info: u32,
+        intr_errcode: u32,
+    },
     ExternalInterrupt,
     InitSignal,
     InterruptWindow,
     MsrRead,
     MsrWrite,
-    EptViolation { fault_gpa: GuestPhysAddr },
+    EptViolation {
+        fault_gpa: GuestPhysAddr,
+        flags: EPTViolationQualFlags,
+    },
     UnSupported(u32),
 }
 
@@ -44,6 +65,7 @@ impl VmExitReason {
             32 => VmExitReason::MsrWrite,
             48 => VmExitReason::EptViolation {
                 fault_gpa: GuestPhysAddr::from(l2exit_info.fault_gpa),
+                flags: EPTViolationQualFlags::from_bits_truncate(l2exit_info.exit_qual),
             },
             _ => VmExitReason::UnSupported(exit_reason),
         }
@@ -178,15 +200,36 @@ impl VmExit {
         Ok(true)
     }
 
-    fn handle_ept_violation(&self, gpa: GuestPhysAddr) -> Result<(), TdxError> {
+    fn handle_ept_violation(
+        &self,
+        gpa: GuestPhysAddr,
+        flags: EPTViolationQualFlags,
+    ) -> Result<(), TdxError> {
         // Handle page alias first
         if self.handle_page_alias(gpa, PageSize::Regular)? {
             return Ok(());
         }
 
-        //TODO: The EPT violation is caused by accessing virtual MMIO.
-        //Add MMIO emulation support.
-        panic!("MMIO emulation not supported yet");
+        // Not memory address, handle as MMIO
+        let io_dir = if flags.contains(EPTViolationQualFlags::R) {
+            IoDirection::Read
+        } else {
+            IoDirection::Write
+        };
+
+        let mut io_req = IoReq::new(
+            IoType::Mmio {
+                addr: gpa,
+                instr_len: self.exit_instr_len as usize,
+            },
+            io_dir,
+        );
+
+        io_req.emulate()?;
+
+        self.skip_instruction();
+
+        Ok(())
     }
 
     pub fn handle_vmexits(&self) -> Result<(), TdxError> {
@@ -200,7 +243,9 @@ impl VmExit {
             VmExitReason::InterruptWindow => self.handle_interrupt_window(),
             VmExitReason::MsrRead => self.handle_rdmsr()?,
             VmExitReason::MsrWrite => self.handle_wrmsr()?,
-            VmExitReason::EptViolation { fault_gpa } => self.handle_ept_violation(fault_gpa)?,
+            VmExitReason::EptViolation { fault_gpa, flags } => {
+                self.handle_ept_violation(fault_gpa, flags)?
+            }
             VmExitReason::UnSupported(v) => {
                 log::error!("UnSupported VmExit Reason {}", v);
                 return Err(TdxError::InjectExcp(ErrExcp::UD));

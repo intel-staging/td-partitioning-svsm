@@ -9,6 +9,7 @@ pub mod error;
 mod gctx;
 mod gmem;
 mod interrupts;
+mod ioreq;
 mod msr_bitmap;
 mod percpu;
 mod sirte;

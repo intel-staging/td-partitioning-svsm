@@ -4,6 +4,8 @@
 //
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
+use super::ioreq::IoType;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ErrExcp {
     GP(u32),
@@ -12,6 +14,10 @@ pub enum ErrExcp {
 
 #[derive(Clone, Copy, Debug)]
 pub enum TdxError {
+    // IO emulation related failure
+    IoEmul(IoType),
+    // IO emulation is not supported
+    IoEmulNotSupport,
     // Guest fatal Error like triple fault
     GuestFatalErr,
     // Require to inject exception to Guest
