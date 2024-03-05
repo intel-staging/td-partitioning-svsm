@@ -12,6 +12,7 @@ use super::vmcs_lib::{
     PrimaryVmExecControls, SecondaryVmExecControls, VmEntryControls, VmcsAccess,
     VmcsField32Control, VmcsField32Guest, VmcsField64Control, VmcsField64Guest,
 };
+use crate::address::PhysAddr;
 use crate::cpu::features::{cpu_has_feature, X86_FEATURE_INVPCID};
 use crate::cpu::idt::common::MCE_VECTOR;
 use crate::cpu::msr::{
@@ -72,7 +73,7 @@ impl Vmcs {
         field.write(self.vm_id, value);
     }
 
-    pub fn init_exec_ctrl(&mut self) {
+    pub fn init_exec_ctrl(&mut self, vlapic_page_pa: PhysAddr) {
         // All the bits in Pin based VM execution control are
         // read-only to L1 VMM. Skip set up this control field.
         //
@@ -161,7 +162,11 @@ impl Vmcs {
 
         self.write32(VmcsField32Control::TPR_THRESHOLD, 0);
 
-        // TODO: APIC-v, config APIC virtualized page address
+        // APIC-v, config APIC virtualized page address
+        self.write64(
+            VmcsField64Control::VIRTUAL_APIC_PAGE_ADDR,
+            vlapic_page_pa.into(),
+        );
 
         // Set up guest exception mask bitmap setting a bit * causes a VM exit
         // on corresponding guest * exception - pg 2902 24.6.3

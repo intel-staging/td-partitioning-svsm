@@ -192,7 +192,8 @@ impl Vcpu {
     }
 
     fn configure_vmcs(&mut self) {
-        self.vmcs.init_exec_ctrl();
+        let vlapic_page_pa = self.vlapic.get_apic_page_addr();
+        self.vmcs.init_exec_ctrl(vlapic_page_pa);
         self.vmcs.init_entry_ctrl();
         self.vmcs.init_exit_ctrl();
 

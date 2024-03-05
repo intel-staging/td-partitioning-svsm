@@ -9,9 +9,10 @@ use super::tdcall::tdvmcall_wrmsr;
 use super::utils::TdpVmId;
 use super::vcpu::ResetMode;
 use super::vmcs_lib::VmcsField64Control;
-use crate::address::VirtAddr;
+use crate::address::{PhysAddr, VirtAddr};
 use crate::cpu::msr::MSR_IA32_TSC_DEADLINE;
 use crate::mm::alloc::allocate_zeroed_page;
+use crate::mm::virt_to_phys;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 // APIC Registers
@@ -375,6 +376,10 @@ impl Vlapic {
         stop_tsc_deadline_timer();
         self.update_timer(0, 0);
         self.reset_tmr();
+    }
+
+    pub fn get_apic_page_addr(&self) -> PhysAddr {
+        virt_to_phys(self.regs.apic_page)
     }
 
     fn reset_tmr(&mut self) {
