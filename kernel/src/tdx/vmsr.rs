@@ -576,14 +576,17 @@ impl MsrEmulation for X2ApicVmsr {
         self.0
     }
 
-    fn read(&self, _vm_id: TdpVmId) -> Result<u64, TdxError> {
-        // TODO: X2APIC msr should be emulated by vlapic.
-        Err(TdxError::Vmsr)
+    fn read(&self, vm_id: TdpVmId) -> Result<u64, TdxError> {
+        this_vcpu(vm_id)
+            .get_vlapic()
+            .read_reg(self.address())
+            .map(|d| d.into())
     }
 
-    fn write(&mut self, _vm_id: TdpVmId, _data: u64) -> Result<(), TdxError> {
-        // TODO: X2APIC msr should be emulated by vlapic.
-        Err(TdxError::Vmsr)
+    fn write(&mut self, vm_id: TdpVmId, data: u64) -> Result<(), TdxError> {
+        this_vcpu_mut(vm_id)
+            .get_vlapic_mut()
+            .write_reg(self.address(), data)
     }
 }
 

@@ -26,6 +26,8 @@ pub enum TdxError {
     TdpNotSupport,
     // Unaligned phys Address
     UnalignedPhysAddr,
+    // Virtual apic related error
+    Vlapic,
     // Vm read related error
     VmRD(u64),
     // Vmsr related error

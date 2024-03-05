@@ -12,7 +12,7 @@ use super::vcpu::ResetMode;
 use super::vcpu_comm::VcpuReqFlags;
 use super::vmcs_lib::VmcsField64Control;
 use crate::address::{PhysAddr, VirtAddr};
-use crate::cpu::msr::MSR_IA32_TSC_DEADLINE;
+use crate::cpu::msr::{rdtsc, MSR_IA32_TSC_DEADLINE};
 use crate::mm::alloc::allocate_zeroed_page;
 use crate::mm::virt_to_phys;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -22,6 +22,7 @@ const APIC_OFFSET_ID: u32 = 0x20; // Local APIC ID
 const APIC_OFFSET_VER: u32 = 0x30; // Local APIC Version
 const APIC_OFFSET_TPR: u32 = 0x80; // Task Priority Register
 const APIC_OFFSET_PPR: u32 = 0xA0; // Processor Priority Register
+const APIC_OFFSET_EOI: u32 = 0xB0; // EOI Register
 const APIC_OFFSET_LDR: u32 = 0xD0; // Logical Destination
 const APIC_OFFSET_DFR: u32 = 0xE0; // Destination Format Register
 const APIC_OFFSET_SVR: u32 = 0xF0; // Spurious Vector Registe
@@ -60,6 +61,7 @@ const APIC_OFFSET_LINT0_LVT: u32 = 0x350; // Local Vector Table (LINT0)
 const APIC_OFFSET_LINT1_LVT: u32 = 0x360; // Local Vector Table (LINT1)
 const APIC_OFFSET_ERROR_LVT: u32 = 0x370; // Local Vector Table (ERROR)
 const APIC_OFFSET_TIMER_ICR: u32 = 0x380; // Timer's Initial Count
+const APIC_OFFSET_TIMER_CCR: u32 = 0x390; // Timer's Current Count
 const APIC_OFFSET_TIMER_DCR: u32 = 0x3E0; // Timer's Divide Configuration
 const APIC_OFFSET_SELF_IPI: u32 = 0x3F0; // Self IPI Register
 
@@ -69,9 +71,28 @@ const APIC_ID_SHIFT: u32 = 24;
 // fields in VER
 const MAXLVTSHIFT: u32 = 16;
 
+// fields in LDR
+const APIC_LDR_RESERVED: u32 = 0x00ffffff;
+
+// fields in DFR
+const APIC_DFR_RESERVED: u32 = 0x0fffffff;
+const APIC_DFR_MODEL_MASK: u32 = 0xf0000000;
+
 // fields in SVR
 const APIC_SVR_VECTOR: u32 = 0x000000ff;
 const APIC_SVR_ENABLE: u32 = 0x00000100;
+
+// fields in ESR
+const APIC_ESR_SEND_ILLEGAL_VECTOR: u32 = 0x00000020;
+const APIC_ESR_RECEIVE_ILLEGAL_VECTOR: u32 = 0x00000040;
+
+// fields in ICR_LOW
+const APIC_VECTOR_MASK: u32 = 0x000000ff;
+
+const APIC_DELMODE_MASK: u32 = 0x00000700;
+const APIC_DELMODE_FIXED: u32 = 0x00000000;
+const APIC_DELMODE_NMI: u32 = 0x00000400;
+const APIC_DELSTAT_PEND: u32 = 0x00001000;
 
 // fields in LVT1/2
 const APIC_LVT_VECTOR: u32 = 0x000000ff;
@@ -84,6 +105,8 @@ const APIC_LVT_M: u32 = 0x00010000;
 
 // fields in LVT Timer
 const APIC_LVTT_TM: u32 = 0x00060000;
+const APIC_LVTT_TM_PERIODIC: u32 = 0x00020000;
+const APIC_LVTT_TM_TSCDLT: u32 = 0x00040000;
 
 // LVT table indices
 const APIC_LVT_TIMER: usize = 0;
@@ -273,9 +296,34 @@ impl VlapicRegs {
     fn is_x2apic(&self) -> bool {
         self.apic_base & APICBASE_LAPIC_MODE == (APICBASE_XAPIC | APICBASE_X2APIC)
     }
+
+    fn clear_isr(&mut self, idx: usize, val: u32) {
+        let apic_page = self.reg_page_mut();
+        apic_page.isr[idx].v &= !val;
+    }
+
+    fn test_and_set_tmr(&mut self, idx: usize, val: u32) -> bool {
+        let apic_page = self.reg_page_mut();
+        let old_v = apic_page.tmr[idx].v;
+        apic_page.tmr[idx].v |= val;
+        (old_v & val) != 0
+    }
+
+    fn test_and_clear_tmr(&mut self, idx: usize, val: u32) -> bool {
+        let apic_page = self.reg_page_mut();
+        let old_v = apic_page.tmr[idx].v;
+        apic_page.tmr[idx].v &= !val;
+        (old_v & val) != 0
+    }
+
+    fn test_and_set_irr(&mut self, idx: usize, val: u32) -> bool {
+        let apic_page = self.reg_page_mut();
+        let old_v = apic_page.irr[idx].v;
+        apic_page.irr[idx].v |= val;
+        (old_v & val) != 0
+    }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 struct VlapicTimer {
     mode: u32,
@@ -287,6 +335,18 @@ struct VlapicTimer {
 
 fn stop_tsc_deadline_timer() {
     tdvmcall_wrmsr(MSR_IA32_TSC_DEADLINE, 0).unwrap();
+}
+
+fn start_tsc_deadline_timer(timeout: u64) {
+    tdvmcall_wrmsr(MSR_IA32_TSC_DEADLINE, timeout).unwrap();
+}
+
+fn x2apic_msr_to_regoff(msr: u32) -> u32 {
+    ((msr - 0x800) & 0x3ff) << 4
+}
+
+fn vector_prio(vector: u8) -> u8 {
+    vector >> 4
 }
 
 pub struct Vlapic {
@@ -427,6 +487,22 @@ impl Vlapic {
         }
     }
 
+    fn set_eoi_exit_bitmap(&mut self, vector: u8) {
+        let vec_mask = 1u64 << (vector & 0x3f);
+        let idx = (vector as usize) >> 6;
+        if (self.eoi_exit_bitmap[idx].fetch_or(vec_mask, Ordering::AcqRel) & vec_mask) == 0 {
+            self.set_vmcs_eoi_exit_bitmap();
+        }
+    }
+
+    fn clear_eoi_exit_bitmap(&mut self, vector: u8) {
+        let vec_mask = 1u64 << (vector & 0x3f);
+        let idx = (vector as usize) >> 6;
+        if (self.eoi_exit_bitmap[idx].fetch_and(!vec_mask, Ordering::AcqRel) & vec_mask) != 0 {
+            self.set_vmcs_eoi_exit_bitmap();
+        }
+    }
+
     fn write_lvt(&mut self, offset: u32, data: u32) {
         let mask = match offset {
             APIC_OFFSET_CMCI_LVT | APIC_OFFSET_THERM_LVT | APIC_OFFSET_PERF_LVT => {
@@ -561,6 +637,347 @@ impl Vlapic {
             // TODO: Logic to check for change in Bits 35:12 and Bit 7 and emulate
         }
 
+        Ok(())
+    }
+
+    fn lvtt_is_tsc_deadline(&self) -> bool {
+        self.get_reg(APIC_OFFSET_TIMER_LVT) & APIC_LVTT_TM == APIC_LVTT_TM_TSCDLT
+    }
+
+    fn lvtt_is_period(&self) -> bool {
+        self.get_reg(APIC_OFFSET_TIMER_LVT) & APIC_LVTT_TM == APIC_LVTT_TM_PERIODIC
+    }
+
+    fn set_expiration(&mut self) -> bool {
+        let tmicr = self.vtimer.tmicr;
+        let divisor_shift = self.vtimer.divisor_shift;
+        if (tmicr == 0) || (divisor_shift > 8) {
+            false
+        } else {
+            let delta = (tmicr as u64) << divisor_shift;
+            let period = if !self.lvtt_is_period() { 0 } else { delta };
+            self.update_timer(rdtsc() + delta, period);
+            true
+        }
+    }
+
+    fn timer_expired(&self, now: u64) -> Option<u64> {
+        if (self.vtimer.timeout != 0) && (now < self.vtimer.timeout) {
+            // If not expired, return option contains timer delta
+            Some(self.vtimer.timeout - now)
+        } else {
+            // return None if expired
+            None
+        }
+    }
+
+    fn get_ccr(&self) -> u32 {
+        if (self.vtimer.tmicr != 0) && !self.lvtt_is_tsc_deadline() {
+            if let Some(delta) = self.timer_expired(rdtsc()) {
+                return (delta >> self.vtimer.divisor_shift) as u32;
+            }
+        }
+        0
+    }
+
+    fn update_ppr(&mut self) {
+        let tpr = self.get_reg(APIC_OFFSET_TPR) as u8;
+        let ppr = if vector_prio(tpr) >= vector_prio(self.in_service_vec) {
+            tpr
+        } else {
+            self.in_service_vec & 0xf0
+        };
+
+        self.set_reg(APIC_OFFSET_PPR, ppr as u32);
+    }
+
+    fn find_highest_isr(&self) -> u8 {
+        for i in (0..8).rev() {
+            let val = self.get_reg(APIC_OFFSET_ISR0 + i * 16);
+            if val != 0 {
+                let bitpos = 31 - val.leading_zeros();
+                return (32 * i + bitpos) as u8;
+            }
+        }
+        0
+    }
+
+    fn write_eoi(&mut self) {
+        if self.in_service_vec != 0 {
+            let vec_mask = 1u32 << (self.in_service_vec & 0x1f);
+            let idx = (self.in_service_vec >> 5) as usize;
+            // clear isr
+            self.regs.clear_isr(idx, vec_mask);
+            self.in_service_vec = self.find_highest_isr();
+            self.update_ppr();
+            if (self.get_reg(APIC_OFFSET_TMR0 + idx as u32 * 16) & vec_mask) != 0 {
+                //TODO: coordinate with vIOPAIC to handle level trigger interrupts
+            }
+        }
+    }
+
+    fn write_svr(&mut self, new: u32) {
+        let old = self.get_reg(APIC_OFFSET_SVR);
+        self.set_reg(APIC_OFFSET_SVR, new);
+        if ((old ^ new) & APIC_SVR_ENABLE) != 0 {
+            if (new & APIC_SVR_ENABLE) == 0 {
+                stop_tsc_deadline_timer();
+                self.mask_lvts();
+            } else if self.lvtt_is_period() && self.set_expiration() {
+                start_tsc_deadline_timer(self.vtimer.timeout);
+            }
+        }
+    }
+
+    fn write_esr(&mut self) {
+        self.set_reg(APIC_OFFSET_ESR, self.esr_pending);
+        self.esr_pending = 0;
+    }
+
+    fn set_pir(&mut self, vector: u8) {
+        let vec_mask = 1u64 << (vector & 0x3f);
+        let idx = (vector as usize) >> 6;
+        self.pir[idx].fetch_or(vec_mask, Ordering::AcqRel);
+    }
+
+    fn set_irr(&mut self, vector: u8) -> bool {
+        let vec_mask = 1u32 << (vector & 0x1f);
+        let idx = (vector as usize) >> 5;
+        // True will be returned if IRR was not set previously.
+        // Otherwise false will be returned.
+        self.regs.test_and_set_irr(idx, vec_mask)
+    }
+
+    /* we only set eoi exit bitmap under x2apic mode when VID enabled */
+    fn set_tmr(&mut self, vector: u8, level: bool) {
+        let vec_mask = 1u32 << (vector & 0x1f);
+        let tmr_idx = (vector as usize) >> 5;
+        if level {
+            if !self.regs.test_and_set_tmr(tmr_idx, vec_mask) && self.is_x2apic() {
+                self.set_eoi_exit_bitmap(vector);
+            }
+        } else if self.regs.test_and_clear_tmr(tmr_idx, vec_mask) && self.is_x2apic() {
+            self.clear_eoi_exit_bitmap(vector);
+        }
+    }
+
+    // xapic:  accept intr by set irr
+    // x2apic: accept intr by set pir
+    fn accept_intr(&mut self, vector: u8, level: bool) {
+        if self.is_x2apic() {
+            // update TMR if interrupt trigger mode has changed
+            self.set_tmr(vector, level);
+            self.set_pir(vector);
+            // TODO: Inject interrupt to guest
+        } else if self.set_irr(vector) {
+            // xapic should not trigger EOI bitmap update
+            self.set_tmr(vector, level);
+            // TODO: Inject interrupt to guest
+        }
+    }
+
+    fn set_error(&mut self, err_mask: u32) {
+        self.esr_pending |= err_mask;
+        if !self.esr_firing.fetch_or(true, Ordering::AcqRel) {
+            let lvt = self.get_reg(APIC_OFFSET_ERROR_LVT);
+            if (lvt & APIC_LVT_M) == 0 {
+                let vec = (lvt & APIC_LVT_VECTOR) as u8;
+                if vec >= 16 {
+                    self.accept_intr(vec, false);
+                }
+            }
+            self.esr_firing.store(false, Ordering::Release);
+        }
+    }
+
+    fn set_intr(&mut self, vector: u8, level: bool) {
+        if vector < 16 {
+            self.set_error(APIC_ESR_RECEIVE_ILLEGAL_VECTOR);
+        } else {
+            self.accept_intr(vector, level);
+        }
+    }
+
+    fn write_icrlo(&mut self, new: u32) {
+        self.set_reg(APIC_OFFSET_ICR_LOW, new & !APIC_DELSTAT_PEND);
+        let icr_low = self.get_reg(APIC_OFFSET_ICR_LOW);
+        let vec = (icr_low & APIC_VECTOR_MASK) as u8;
+        let mode = icr_low & APIC_DELMODE_MASK;
+
+        if (mode == APIC_DELMODE_FIXED) && (vec < 16) {
+            self.set_error(APIC_ESR_SEND_ILLEGAL_VECTOR);
+        } else {
+            //TODO: currently only support UP which doesn't need to
+            //calculate destination. To support SMP, should calculate
+            //the destination to get the desired targets. And also needs
+            //to handle INIT-SIPI delivery mode.
+            if mode == APIC_DELMODE_FIXED {
+                self.set_intr(vec, false);
+            } else if mode == APIC_DELMODE_NMI {
+                //TODO: request to inject NMI
+            } else {
+                log::warn!("vlapic: unsupported deliver mode 0x{:x}", mode);
+            }
+        }
+    }
+
+    fn write_icrtmr(&mut self, new: u32) {
+        if !self.lvtt_is_tsc_deadline() {
+            self.set_reg(APIC_OFFSET_TIMER_ICR, new);
+            self.vtimer.tmicr = new;
+            if self.set_expiration() {
+                start_tsc_deadline_timer(self.vtimer.timeout);
+            } else {
+                stop_tsc_deadline_timer();
+            }
+        }
+    }
+
+    // xapic:  TPR shadow
+    //         trap all read
+    // x2apic: TPR shadow + virtual interrupt delivery + APIC register virtualization
+    //         trap read only for TIMER_CCR & CMCI_LVT
+    pub fn read_reg(&self, offset_arg: u32) -> Result<u32, TdxError> {
+        let val = if !self.is_x2apic() {
+            match offset_arg {
+                APIC_OFFSET_ID => self.get_reg(APIC_OFFSET_ID),
+                APIC_OFFSET_VER => self.get_reg(APIC_OFFSET_VER),
+                APIC_OFFSET_TPR => self.get_reg(APIC_OFFSET_TPR),
+                APIC_OFFSET_PPR => self.get_reg(APIC_OFFSET_PPR),
+                APIC_OFFSET_LDR => self.get_reg(APIC_OFFSET_LDR),
+                APIC_OFFSET_DFR => self.get_reg(APIC_OFFSET_DFR),
+                APIC_OFFSET_SVR => self.get_reg(APIC_OFFSET_SVR),
+                APIC_OFFSET_ISR0 => self.get_reg(APIC_OFFSET_ISR0),
+                APIC_OFFSET_ISR1 => self.get_reg(APIC_OFFSET_ISR1),
+                APIC_OFFSET_ISR2 => self.get_reg(APIC_OFFSET_ISR2),
+                APIC_OFFSET_ISR3 => self.get_reg(APIC_OFFSET_ISR3),
+                APIC_OFFSET_ISR4 => self.get_reg(APIC_OFFSET_ISR4),
+                APIC_OFFSET_ISR5 => self.get_reg(APIC_OFFSET_ISR5),
+                APIC_OFFSET_ISR6 => self.get_reg(APIC_OFFSET_ISR6),
+                APIC_OFFSET_ISR7 => self.get_reg(APIC_OFFSET_ISR7),
+                APIC_OFFSET_TMR0 => self.get_reg(APIC_OFFSET_TMR0),
+                APIC_OFFSET_TMR1 => self.get_reg(APIC_OFFSET_TMR1),
+                APIC_OFFSET_TMR2 => self.get_reg(APIC_OFFSET_TMR2),
+                APIC_OFFSET_TMR3 => self.get_reg(APIC_OFFSET_TMR3),
+                APIC_OFFSET_TMR4 => self.get_reg(APIC_OFFSET_TMR4),
+                APIC_OFFSET_TMR5 => self.get_reg(APIC_OFFSET_TMR5),
+                APIC_OFFSET_TMR6 => self.get_reg(APIC_OFFSET_TMR6),
+                APIC_OFFSET_TMR7 => self.get_reg(APIC_OFFSET_TMR7),
+                APIC_OFFSET_IRR0 => self.get_reg(APIC_OFFSET_IRR0),
+                APIC_OFFSET_IRR1 => self.get_reg(APIC_OFFSET_IRR1),
+                APIC_OFFSET_IRR2 => self.get_reg(APIC_OFFSET_IRR2),
+                APIC_OFFSET_IRR3 => self.get_reg(APIC_OFFSET_IRR3),
+                APIC_OFFSET_IRR4 => self.get_reg(APIC_OFFSET_IRR4),
+                APIC_OFFSET_IRR5 => self.get_reg(APIC_OFFSET_IRR5),
+                APIC_OFFSET_IRR6 => self.get_reg(APIC_OFFSET_IRR6),
+                APIC_OFFSET_IRR7 => self.get_reg(APIC_OFFSET_IRR7),
+                APIC_OFFSET_ESR => self.get_reg(APIC_OFFSET_ESR),
+                APIC_OFFSET_ICR_LOW => self.get_reg(APIC_OFFSET_ICR_LOW),
+                APIC_OFFSET_ICR_HI => self.get_reg(APIC_OFFSET_ICR_HI),
+                APIC_OFFSET_CMCI_LVT => self.get_reg(APIC_OFFSET_CMCI_LVT),
+                APIC_OFFSET_TIMER_LVT => self.get_reg(APIC_OFFSET_TIMER_LVT),
+                APIC_OFFSET_THERM_LVT => self.get_reg(APIC_OFFSET_THERM_LVT),
+                APIC_OFFSET_PERF_LVT => self.get_reg(APIC_OFFSET_PERF_LVT),
+                APIC_OFFSET_LINT0_LVT => self.get_reg(APIC_OFFSET_LINT0_LVT),
+                APIC_OFFSET_LINT1_LVT => self.get_reg(APIC_OFFSET_LINT1_LVT),
+                APIC_OFFSET_ERROR_LVT => self.get_reg(APIC_OFFSET_ERROR_LVT),
+                APIC_OFFSET_TIMER_ICR => {
+                    if self.lvtt_is_tsc_deadline() {
+                        0
+                    } else {
+                        self.get_reg(APIC_OFFSET_TIMER_ICR)
+                    }
+                }
+                APIC_OFFSET_TIMER_CCR => self.get_ccr(),
+                APIC_OFFSET_TIMER_DCR => self.get_reg(APIC_OFFSET_TIMER_DCR),
+                _ => return Err(TdxError::Vlapic),
+            }
+        } else {
+            match x2apic_msr_to_regoff(offset_arg) {
+                APIC_OFFSET_CMCI_LVT => self.get_reg(APIC_OFFSET_CMCI_LVT),
+                APIC_OFFSET_TIMER_CCR => self.get_ccr(),
+                _ => return Err(TdxError::Vlapic),
+            }
+        };
+
+        Ok(val)
+    }
+
+    // xapic:  TPR shadow
+    //         trap all write except SELF_IPI
+    // x2apic: TPR shadow + virtual interrupt delivery + APIC register virtualization
+    //         trap all write except DFR & ICR_HI
+    pub fn write_reg(&mut self, offset_arg: u32, data: u64) -> Result<(), TdxError> {
+        let data32 = data as u32;
+        let data32_high = (data >> 32) as u32;
+        let is_x2apic = self.is_x2apic();
+        let offset = if is_x2apic {
+            x2apic_msr_to_regoff(offset_arg)
+        } else {
+            offset_arg
+        };
+
+        match offset {
+            APIC_OFFSET_ID => {} // Force APIC ID as read only
+            APIC_OFFSET_TPR => {
+                if !is_x2apic {
+                    self.set_reg(APIC_OFFSET_TPR, data32);
+                    self.update_ppr();
+                } else {
+                    return Err(TdxError::Vlapic);
+                }
+            }
+            APIC_OFFSET_EOI => self.write_eoi(),
+            APIC_OFFSET_LDR => self.set_reg(APIC_OFFSET_LDR, data32 & !APIC_LDR_RESERVED),
+            APIC_OFFSET_DFR => {
+                if !is_x2apic {
+                    self.set_reg(
+                        APIC_OFFSET_DFR,
+                        data32 & APIC_DFR_MODEL_MASK | APIC_DFR_RESERVED,
+                    );
+                } else {
+                    return Err(TdxError::Vlapic);
+                }
+            }
+            APIC_OFFSET_SVR => self.write_svr(data32),
+            APIC_OFFSET_ESR => self.write_esr(),
+            APIC_OFFSET_ICR_LOW => {
+                if is_x2apic {
+                    self.set_reg(APIC_OFFSET_ICR_HI, data32_high);
+                }
+                self.write_icrlo(data32);
+            }
+            APIC_OFFSET_ICR_HI => {
+                if !is_x2apic {
+                    self.set_reg(APIC_OFFSET_ICR_HI, data32);
+                } else {
+                    return Err(TdxError::Vlapic);
+                }
+            }
+            APIC_OFFSET_CMCI_LVT => self.write_lvt(APIC_OFFSET_CMCI_LVT, data32),
+            APIC_OFFSET_TIMER_LVT => self.write_lvt(APIC_OFFSET_TIMER_LVT, data32),
+            APIC_OFFSET_THERM_LVT => self.write_lvt(APIC_OFFSET_THERM_LVT, data32),
+            APIC_OFFSET_PERF_LVT => self.write_lvt(APIC_OFFSET_PERF_LVT, data32),
+            APIC_OFFSET_LINT0_LVT => self.write_lvt(APIC_OFFSET_LINT0_LVT, data32),
+            APIC_OFFSET_LINT1_LVT => self.write_lvt(APIC_OFFSET_LINT1_LVT, data32),
+            APIC_OFFSET_ERROR_LVT => self.write_lvt(APIC_OFFSET_ERROR_LVT, data32),
+            APIC_OFFSET_TIMER_ICR => self.write_icrtmr(data32),
+            APIC_OFFSET_TIMER_DCR => self.write_dcr(data32),
+            APIC_OFFSET_SELF_IPI => {
+                if is_x2apic {
+                    self.set_reg(APIC_OFFSET_SELF_IPI, data32);
+                    let vec = (data32 & APIC_VECTOR_MASK) as u8;
+                    if vec < 16 {
+                        self.set_error(APIC_ESR_SEND_ILLEGAL_VECTOR);
+                    } else {
+                        self.accept_intr(vec, false);
+                    }
+                } else {
+                    return Err(TdxError::Vlapic);
+                }
+            }
+            _ => return Err(TdxError::Vlapic),
+        }
         Ok(())
     }
 }
