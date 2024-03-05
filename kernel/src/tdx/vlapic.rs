@@ -4,6 +4,8 @@
 //
 // Author: Jason CJ Chen <jason.cj.chen@intel.com>
 
+extern crate alloc;
+
 use super::error::{ErrExcp, TdxError};
 use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::tdcall::tdvmcall_wrmsr;
@@ -15,8 +17,10 @@ use super::vmcs_lib::{VmcsField32Control, VmcsField64Control, VMX_INT_INFO_VALID
 use crate::address::{PhysAddr, VirtAddr};
 use crate::cpu::idt::common::FIRST_DYNAMIC_VECTOR;
 use crate::cpu::msr::{rdtsc, MSR_IA32_TSC_DEADLINE};
+use crate::locking::SpinLock;
 use crate::mm::alloc::allocate_zeroed_page;
 use crate::mm::{virt_to_phys, PAGE_SIZE};
+use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 // APIC Registers
@@ -338,6 +342,21 @@ impl VlapicRegs {
     }
 }
 
+pub trait VlapicRegsRead: Sync + Send + core::fmt::Debug {
+    fn get_reg(&self, offset: u32) -> u32;
+    fn is_x2apic(&self) -> bool;
+}
+
+impl VlapicRegsRead for SpinLock<VlapicRegs> {
+    fn get_reg(&self, offset: u32) -> u32 {
+        self.lock().get_reg(offset)
+    }
+
+    fn is_x2apic(&self) -> bool {
+        self.lock().is_x2apic()
+    }
+}
+
 #[derive(Debug)]
 struct VlapicTimer {
     mode: u32,
@@ -367,7 +386,7 @@ pub struct Vlapic {
     vm_id: TdpVmId,
     apic_id: u32,
     is_bsp: bool,
-    regs: VlapicRegs,
+    regs: Arc<SpinLock<VlapicRegs>>,
     vtimer: VlapicTimer,
 
     esr_pending: u32,
@@ -388,7 +407,8 @@ impl Vlapic {
         self.vm_id = vm_id;
         self.apic_id = apic_id;
         self.is_bsp = is_bsp;
-        self.regs = VlapicRegs::new(DEFAULT_APIC_BASE);
+        let regs = Arc::new(SpinLock::new(VlapicRegs::new(DEFAULT_APIC_BASE)));
+        unsafe { core::ptr::write(core::ptr::addr_of_mut!(self.regs), regs) };
         self.vtimer = VlapicTimer {
             mode: 0,
             tmicr: 0,
@@ -418,18 +438,18 @@ impl Vlapic {
     pub fn reset(&mut self, mode: ResetMode) {
         let preserved_lapic_mode = self.get_apicbase() & APICBASE_LAPIC_MODE;
         let preserved_apic_id = self.get_reg(APIC_OFFSET_ID);
-        self.regs.apic_base = DEFAULT_APIC_BASE;
+        self.regs.lock().apic_base = DEFAULT_APIC_BASE;
         if self.is_bsp {
-            self.regs.apic_base |= APICBASE_BSP;
+            self.regs.lock().apic_base |= APICBASE_BSP;
         }
         if mode == ResetMode::InitReset {
             if (preserved_lapic_mode & APICBASE_ENABLED) != 0 {
                 // Per SDM 10.12.5.1 vol.3, need to preserve lapic mode after INIT
-                self.regs.apic_base |= preserved_lapic_mode;
+                self.regs.lock().apic_base |= preserved_lapic_mode;
             }
         } else {
             // Upon reset, vlapic is set to xAPIC mode.
-            self.regs.apic_base |= APICBASE_XAPIC;
+            self.regs.lock().apic_base |= APICBASE_XAPIC;
         }
 
         if mode == ResetMode::InitReset {
@@ -459,7 +479,7 @@ impl Vlapic {
     }
 
     pub fn get_apic_page_addr(&self) -> PhysAddr {
-        virt_to_phys(self.regs.apic_page)
+        virt_to_phys(self.regs.lock().apic_page)
     }
 
     fn reset_tmr(&mut self) {
@@ -600,17 +620,17 @@ impl Vlapic {
 
     #[inline(always)]
     fn get_reg(&self, offset: u32) -> u32 {
-        self.regs.get_reg(offset)
+        self.regs.lock().get_reg(offset)
     }
 
     #[inline(always)]
     fn set_reg(&mut self, offset: u32, val: u32) {
-        self.regs.set_reg(offset, val);
+        self.regs.lock().set_reg(offset, val);
     }
 
     #[inline(always)]
     fn is_x2apic(&self) -> bool {
-        self.regs.is_x2apic()
+        self.regs.lock().is_x2apic()
     }
 
     fn build_x2apic_id(&mut self) {
@@ -621,7 +641,7 @@ impl Vlapic {
     }
 
     pub fn get_apicbase(&self) -> u64 {
-        self.regs.apic_base
+        self.regs.lock().apic_base
     }
 
     pub fn set_apicbase(&mut self, new: u64) -> Result<(), TdxError> {
@@ -638,7 +658,7 @@ impl Vlapic {
                     // Invalid lapic mode
                     return Err(TdxError::InjectExcp(ErrExcp::GP(0)));
                 } else if mode == (APICBASE_XAPIC | APICBASE_X2APIC) {
-                    self.regs.apic_base = new;
+                    self.regs.lock().apic_base = new;
                     self.build_x2apic_id();
                     this_vcpu_mut(self.vm_id).get_ctx_mut().set_intr_status(0);
                     this_vcpu(self.vm_id)
@@ -725,7 +745,7 @@ impl Vlapic {
             let vec_mask = 1u32 << (self.in_service_vec & 0x1f);
             let idx = (self.in_service_vec >> 5) as usize;
             // clear isr
-            self.regs.clear_isr(idx, vec_mask);
+            self.regs.lock().clear_isr(idx, vec_mask);
             self.in_service_vec = self.find_highest_isr();
             self.update_ppr();
             if (self.get_reg(APIC_OFFSET_TMR0 + idx as u32 * 16) & vec_mask) != 0 {
@@ -766,7 +786,7 @@ impl Vlapic {
         let idx = (vector as usize) >> 5;
         // True will be returned if IRR was not set previously.
         // Otherwise false will be returned.
-        self.regs.test_and_set_irr(idx, vec_mask)
+        self.regs.lock().test_and_set_irr(idx, vec_mask)
     }
 
     /* we only set eoi exit bitmap under x2apic mode when VID enabled */
@@ -774,10 +794,10 @@ impl Vlapic {
         let vec_mask = 1u32 << (vector & 0x1f);
         let tmr_idx = (vector as usize) >> 5;
         if level {
-            if !self.regs.test_and_set_tmr(tmr_idx, vec_mask) && self.is_x2apic() {
+            if !self.regs.lock().test_and_set_tmr(tmr_idx, vec_mask) && self.is_x2apic() {
                 self.set_eoi_exit_bitmap(vector);
             }
-        } else if self.regs.test_and_clear_tmr(tmr_idx, vec_mask) && self.is_x2apic() {
+        } else if self.regs.lock().test_and_clear_tmr(tmr_idx, vec_mask) && self.is_x2apic() {
             self.clear_eoi_exit_bitmap(vector);
         }
     }
@@ -867,8 +887,9 @@ impl Vlapic {
         for i in 0..4 {
             let val = self.pir[i].load(Ordering::Acquire);
             if val != 0 {
-                self.regs.set_irr(i * 2, (val & 0xffff_ffff) as u32);
+                self.regs.lock().set_irr(i * 2, (val & 0xffff_ffff) as u32);
                 self.regs
+                    .lock()
                     .set_irr(i * 2 + 1, ((val >> 32) & 0xffff_ffff) as u32);
                 self.pir[i].store(0, Ordering::Release);
             }
@@ -899,9 +920,9 @@ impl Vlapic {
         let vec_mask = 1u32 << (vector & 0x1f);
         let idx = (vector as usize) >> 5;
         // clear irr
-        self.regs.clear_irr(idx, vec_mask);
+        self.regs.lock().clear_irr(idx, vec_mask);
         // set isr
-        self.regs.clear_isr(idx, vec_mask);
+        self.regs.lock().clear_isr(idx, vec_mask);
         self.update_ppr();
     }
 
@@ -1203,6 +1224,10 @@ impl Vlapic {
                 .broadcast_eoi(vec)
                 .expect("Failed to handle EOI vmexit");
         }
+    }
+
+    pub fn regs_reader(&self) -> Arc<dyn VlapicRegsRead> {
+        self.regs.clone()
     }
 }
 

@@ -80,7 +80,7 @@ impl Vcpu {
         self.ctx.init(vm_id);
         self.vlapic.init(vm_id, apic_id, is_bsp);
         self.virq.init(vm_id);
-        let cb = Arc::new(VcpuCommBlock::new(apic_id));
+        let cb = Arc::new(VcpuCommBlock::new(apic_id, self.vlapic.regs_reader()));
         this_tdp(vm_id).register_vcpu_cb(cb.clone());
         unsafe { core::ptr::write(core::ptr::addr_of_mut!(self.cb), cb) };
     }

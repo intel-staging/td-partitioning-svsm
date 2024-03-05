@@ -4,6 +4,10 @@
 //
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
+extern crate alloc;
+
+use super::vlapic::VlapicRegsRead;
+use alloc::sync::Arc;
 use bitflags::bitflags;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -25,13 +29,15 @@ bitflags! {
 #[derive(Debug)]
 pub struct VcpuCommBlock {
     pub apic_id: u32,
+    pub vlapic: Arc<dyn VlapicRegsRead>,
     pending_req: AtomicU64,
 }
 
 impl VcpuCommBlock {
-    pub fn new(apic_id: u32) -> Self {
+    pub fn new(apic_id: u32, vlapic: Arc<dyn VlapicRegsRead>) -> Self {
         Self {
             apic_id,
+            vlapic,
             pending_req: AtomicU64::new(0),
         }
     }
