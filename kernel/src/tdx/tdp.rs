@@ -87,6 +87,10 @@ impl Tdp {
     pub fn get_sirte_vec(&self) -> Option<u8> {
         self.sirte_vec
     }
+
+    pub fn get_vm_id(&self) -> TdpVmId {
+        self.vm_id
+    }
 }
 
 pub fn init_tdps(apic_id: u32) -> Result<(), TdxError> {
@@ -134,4 +138,20 @@ pub fn get_vcpu_cb(vm_id: TdpVmId, apic_id: u32) -> Option<Arc<VcpuCommBlock>> {
     TDPCBS[vm_id.index()]
         .get()
         .and_then(|cbs| cbs.get(&apic_id).cloned())
+}
+
+pub fn get_tdp_by_notify_vec(vec: u8) -> Option<&'static Tdp> {
+    for tdp in TDPS.iter() {
+        let tdp = tdp.get().and_then(|tdp| {
+            if tdp.sirte_vec == Some(vec) {
+                Some(tdp)
+            } else {
+                None
+            }
+        });
+        if tdp.is_some() {
+            return tdp;
+        }
+    }
+    None
 }

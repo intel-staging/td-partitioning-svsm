@@ -135,3 +135,16 @@ pub fn this_vcpu_mut(vm_id: TdpVmId) -> &'static mut Vcpu {
 
     panic!("TDX: NO vcpu found for VM{:?}", vm_id)
 }
+
+pub fn this_sirte_mut(vm_id: TdpVmId) -> &'static mut Sirte {
+    if let Some(td_percpu) = this_cpu().arch.as_any().downcast_ref::<TdPerCpu>() {
+        if let Some(vaddr) = td_percpu.tdpvps[vm_id.index()].get() {
+            if !vaddr.is_null() {
+                let tdpvp = unsafe { &mut *vaddr.as_mut_ptr::<TdpVp>().cast::<TdpVp>() };
+                return &mut tdpvp.sirte;
+            }
+        }
+    }
+
+    panic!("TDX: NO sirte found for VM{:?}", vm_id)
+}

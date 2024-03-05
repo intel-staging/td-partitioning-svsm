@@ -8,6 +8,7 @@ extern crate alloc;
 
 use super::gctx::GuestCpuContext;
 use super::interrupts::VCPU_KICK_VECTOR;
+use super::percpu::this_sirte_mut;
 use super::tdcall::tdvmcall_sti_halt;
 use super::tdp::this_tdp;
 use super::utils::{td_flush_vpid_global, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet};
@@ -244,6 +245,10 @@ impl Vcpu {
 
         if self.cb.test_and_clear_request(VcpuReqFlags::VTIMER) {
             self.vlapic.handle_expired_timer();
+        }
+
+        if self.cb.test_and_clear_request(VcpuReqFlags::SIRTE) {
+            this_sirte_mut(self.vm_id).handle_sirte();
         }
     }
 

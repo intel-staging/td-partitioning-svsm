@@ -5,13 +5,17 @@
 // Author: Jason CJ Chen <jason.cj.chen@intel.com>
 
 use super::error::TdxError;
-use super::tdp::this_tdp;
+use super::tdp::{get_tdp_by_notify_vec, get_vcpu_cb, this_tdp};
 use super::utils::{td_convert_kernel_pages, td_share_irte_hdr, TdpVmId};
+use super::vcpu_comm::VcpuReqFlags;
+use super::vlapic::vlapic_receive_intr;
 use crate::address::VirtAddr;
 use crate::cpu::idt::common::X86ExceptionContext;
+use crate::cpu::lapic::LAPIC;
 use crate::mm::{virt_to_phys, PAGE_SIZE};
 use crate::utils::zero_mem_region;
 use bitfield_struct::bitfield;
+use core::sync::atomic::{fence, Ordering};
 
 #[bitfield(u8)]
 struct SirteMode {
@@ -53,6 +57,7 @@ union IrqEvent {
     irqchip: IrqChipEvent,
 }
 
+const IRQ_TYPE_MSI: u32 = 2;
 #[repr(C)]
 struct SirtEntry {
     irq_type: u32,
@@ -94,6 +99,18 @@ impl SharedBuf {
             ..Default::default()
         }
     }
+
+    fn is_empty(&self) -> bool {
+        self.head == self.tail
+    }
+
+    fn update_head(&mut self) {
+        let mut pos = self.head + self.ele_size;
+        if pos >= self.size {
+            pos -= self.size;
+        }
+        self.head = pos;
+    }
 }
 
 // Sirte page is 4K. Of the 4K, first 48 bytes are allocated for header
@@ -108,6 +125,24 @@ struct SirtePage {
     // padding to make buffer(PAGE_SIZE - Header) a multiple of struct SirtEntry (16 bytes)
     rsv: [u8; 15],
     sbuf: SharedBuf,
+}
+
+impl SirtePage {
+    fn read(&mut self) -> Option<SirtEntry> {
+        if !self.sbuf.is_empty() {
+            // Get the address of the SirtePage
+            let ptr = core::ptr::addr_of!(*self) as *const u8;
+            let src =
+                ptr.wrapping_add(SIRTE_HEADER_SIZE + self.sbuf.head as usize) as *const SirtEntry;
+            let entry = unsafe { src.read() };
+            // Ensure data is copied out before updating shared buffer head.
+            fence(Ordering::SeqCst);
+            self.sbuf.update_head();
+            Some(entry)
+        } else {
+            None
+        }
+    }
 }
 
 pub struct Sirte {
@@ -134,8 +169,35 @@ impl Sirte {
 
         td_share_irte_hdr(paddr, vm_id)
     }
+
+    pub fn handle_sirte(&mut self) {
+        while let Some(sirte) = self.page.read() {
+            match sirte.irq_type {
+                IRQ_TYPE_MSI => unsafe {
+                    vlapic_receive_intr(
+                        self.vm_id,
+                        sirte.event.msi.mode.trig_mode(),
+                        sirte.event.msi.dest_id as u32,
+                        !sirte.event.msi.mode.dest_mode(),
+                        sirte.event.msi.mode.delivery_mode() as u32,
+                        sirte.event.msi.vector,
+                    );
+                },
+                _ => {
+                    log::error!("handle_sirte(): Incorrect irq_type = {}!", sirte.irq_type);
+                    break;
+                }
+            }
+        }
+    }
 }
 
-pub fn handle_sirte_request(_ctx: &X86ExceptionContext) {
-    //TODO: handle sirte request and inject interrupts to TDP guest
+pub fn handle_sirte_request(ctx: &X86ExceptionContext) {
+    if let Some(tdp) = get_tdp_by_notify_vec(ctx.vector as u8) {
+        if let Some(cb) = get_vcpu_cb(tdp.get_vm_id(), LAPIC.id()) {
+            // Make a request to handle interrupt injection in vcpu
+            // run loop instead of in interrupt context
+            cb.make_request(VcpuReqFlags::SIRTE);
+        }
+    }
 }

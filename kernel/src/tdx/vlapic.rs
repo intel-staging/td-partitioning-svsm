@@ -12,6 +12,7 @@ use super::vcpu::ResetMode;
 use super::vcpu_comm::VcpuReqFlags;
 use super::vmcs_lib::VmcsField64Control;
 use crate::address::{PhysAddr, VirtAddr};
+use crate::cpu::idt::common::FIRST_DYNAMIC_VECTOR;
 use crate::cpu::msr::{rdtsc, MSR_IA32_TSC_DEADLINE};
 use crate::mm::alloc::allocate_zeroed_page;
 use crate::mm::virt_to_phys;
@@ -1026,4 +1027,23 @@ impl Vlapic {
             start_tsc_deadline_timer(self.vtimer.timeout);
         }
     }
+}
+
+const DELMODE_FIXED: u32 = 0x0; // Delivery Mode: Fixed
+const DELMODE_LOPRI: u32 = 0x1; // Delivery Mode: Lowest priority
+pub fn vlapic_receive_intr(
+    vm_id: TdpVmId,
+    level: bool,
+    _dest: u32,
+    _phys: bool,
+    delmode: u32,
+    vector: u8,
+) {
+    assert!(vector >= FIRST_DYNAMIC_VECTOR);
+    assert!(delmode == DELMODE_FIXED || delmode == DELMODE_LOPRI);
+    //TODO: currently only working on UP. Extend with destination calculation
+    //to support SMP
+    this_vcpu_mut(vm_id)
+        .get_vlapic_mut()
+        .set_intr(vector, level);
 }

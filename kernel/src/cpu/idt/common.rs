@@ -106,6 +106,7 @@ impl IdtEntry {
 }
 
 pub const IDT_ENTRIES: usize = 256;
+pub const FIRST_DYNAMIC_VECTOR: u8 = 32;
 
 #[repr(C, packed)]
 struct IdtDesc {
