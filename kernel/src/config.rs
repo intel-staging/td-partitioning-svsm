@@ -10,6 +10,7 @@ use core::slice;
 
 use crate::acpi::tables::{load_acpi_cpu_info, ACPICPUInfo};
 use crate::address::PhysAddr;
+use crate::cpu::features::is_sev;
 use crate::error::SvsmError;
 use crate::fw_cfg::FwCfg;
 use crate::fw_meta::{parse_fw_meta_data, SevFWMetaData};
@@ -84,6 +85,9 @@ impl SvsmConfig<'_> {
         }
     }
     pub fn page_state_change_required(&self) -> bool {
+        if !is_sev() {
+            return false;
+        }
         match self {
             SvsmConfig::FirmwareConfig(_) => true,
             SvsmConfig::IgvmConfig(igvm_params) => igvm_params.page_state_change_required(),

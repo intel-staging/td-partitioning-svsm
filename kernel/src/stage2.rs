@@ -19,6 +19,7 @@ use svsm::address::{Address, PhysAddr, VirtAddr};
 use svsm::config::SvsmConfig;
 use svsm::console::{init_console, install_console_logger, WRITER};
 use svsm::cpu::cpuid::{dump_cpuid_table, register_cpuid_table};
+use svsm::cpu::features::{is_sev, is_tdx};
 use svsm::cpu::gdt;
 use svsm::cpu::ghcb::current_ghcb;
 use svsm::cpu::idt::stage2::{early_idt_init, early_idt_init_no_ghcb};
@@ -39,7 +40,8 @@ use svsm::serial::SerialPort;
 use svsm::sev::ghcb::PageStateChangeOp;
 use svsm::sev::msr_protocol::verify_ghcb_version;
 use svsm::sev::{pvalidate_range, sev_status_init, sev_status_verify, PvalidateOp};
-use svsm::svsm_console::SVSMIOPort;
+use svsm::svsm_console::{SVSMIOPort, SVSMTdIOPort};
+use svsm::tdx::td_accept_memory;
 use svsm::types::{PageSize, PAGE_SIZE};
 use svsm::utils::immut_after_init::ImmutAfterInitCell;
 use svsm::utils::{halt, MemoryRegion};
@@ -71,18 +73,23 @@ fn init_percpu() {
         bsp_percpu
             .map_self_stage2()
             .expect("Failed to map per-cpu area");
-        bsp_percpu.setup_ghcb().expect("Failed to setup BSP GHCB");
-        bsp_percpu.register_ghcb().expect("Failed to register GHCB");
+        if is_sev() {
+            bsp_percpu.setup_ghcb().expect("Failed to setup BSP GHCB");
+            bsp_percpu.register_ghcb().expect("Failed to register GHCB");
+        }
     }
 }
 
 fn shutdown_percpu() {
-    this_cpu_mut()
-        .shutdown()
-        .expect("Failed to shut down percpu data (including GHCB)");
+    if is_sev() {
+        this_cpu_mut()
+            .shutdown()
+            .expect("Failed to shut down percpu data (including GHCB)");
+    }
 }
 
 static CONSOLE_IO: SVSMIOPort = SVSMIOPort::new();
+static CONSOLE_TDIO: SVSMTdIOPort = SVSMTdIOPort::new();
 static CONSOLE_SERIAL: ImmutAfterInitCell<SerialPort<'_>> = ImmutAfterInitCell::uninit();
 
 fn setup_env(config: &SvsmConfig<'_>) {
@@ -98,9 +105,11 @@ fn setup_env(config: &SvsmConfig<'_>) {
     register_cpuid_table(unsafe { &CPUID_PAGE });
     paging_init_early();
 
-    // Bring up the GCHB for use from the SVSMIOPort console.
-    verify_ghcb_version();
-    sev_status_init();
+    if is_sev() {
+        // Bring up the GCHB for use from the SVSMIOPort console.
+        verify_ghcb_version();
+        sev_status_init();
+    }
     set_init_pgtable(PageTableRef::new(unsafe { addr_of_mut!(pgtable) }));
     setup_stage2_allocator();
     init_percpu();
@@ -108,20 +117,31 @@ fn setup_env(config: &SvsmConfig<'_>) {
     // Init IDT again with handlers requiring GHCB (eg. #VC handler)
     early_idt_init();
 
-    CONSOLE_SERIAL
-        .init(&SerialPort {
-            driver: &CONSOLE_IO,
-            port: config.debug_serial_port(),
-        })
-        .expect("console serial output already configured");
+    if is_tdx() {
+        CONSOLE_SERIAL
+            .init(&SerialPort {
+                driver: &CONSOLE_TDIO,
+                port: config.debug_serial_port(),
+            })
+            .expect("console serial output already configured");
+    } else {
+        CONSOLE_SERIAL
+            .init(&SerialPort {
+                driver: &CONSOLE_IO,
+                port: config.debug_serial_port(),
+            })
+            .expect("console serial output already configured");
+    }
 
     WRITER.lock().set(&*CONSOLE_SERIAL);
     init_console();
 
-    // Console is fully working now and any unsupported configuration can be
-    // properly reported.
-    dump_cpuid_table();
-    sev_status_verify();
+    if is_sev() {
+        // Console is fully working now and any unsupported configuration can be
+        // properly reported.
+        dump_cpuid_table();
+        sev_status_verify();
+    }
 }
 
 fn map_and_validate(config: &SvsmConfig<'_>, vregion: MemoryRegion<VirtAddr>, paddr: PhysAddr) {
@@ -145,7 +165,11 @@ fn map_and_validate(config: &SvsmConfig<'_>, vregion: MemoryRegion<VirtAddr>, pa
             )
             .expect("GHCB::PAGE_STATE_CHANGE call failed for kernel region");
     }
-    pvalidate_range(vregion, PvalidateOp::Valid).expect("PVALIDATE kernel region failed");
+    if is_sev() {
+        pvalidate_range(vregion, PvalidateOp::Valid).expect("PVALIDATE kernel region failed");
+    } else if is_tdx() {
+        td_accept_memory(paddr.into(), vregion.len().try_into().unwrap());
+    }
     valid_bitmap_set_valid_range(paddr, paddr + vregion.len());
 }
 
@@ -171,6 +195,8 @@ pub extern "C" fn stage2_main(launch_info: &Stage1LaunchInfo) {
         let igvm_params = IgvmParams::new(VirtAddr::from(launch_info.igvm_params as u64))
             .expect("Invalid IGVM parameters");
         SvsmConfig::IgvmConfig(igvm_params)
+    } else if is_tdx() {
+        SvsmConfig::FirmwareConfig(FwCfg::new(&CONSOLE_TDIO))
     } else {
         SvsmConfig::FirmwareConfig(FwCfg::new(&CONSOLE_IO))
     };
@@ -360,6 +386,8 @@ pub extern "C" fn stage2_main(launch_info: &Stage1LaunchInfo) {
 
     // Shut down the GHCB
     shutdown_percpu();
+
+    log::info!("Starting SVSM kernel...");
 
     unsafe {
         asm!("jmp *%rax",
