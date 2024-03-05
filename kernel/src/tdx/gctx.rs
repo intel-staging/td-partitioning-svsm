@@ -673,6 +673,21 @@ impl GuestCpuContext {
         }
     }
 
+    pub fn set_seg(&mut self, seg: GuestCpuSegCode, val: Segment) {
+        match seg {
+            GuestCpuSegCode::Idtr => self.segs.idtr.set(val),
+            GuestCpuSegCode::Gdtr => self.segs.gdtr.set(val),
+            GuestCpuSegCode::Ldtr => self.segs.ldtr.set(val),
+            GuestCpuSegCode::CS => self.segs.cs.set(val),
+            GuestCpuSegCode::DS => self.segs.ds.set(val),
+            GuestCpuSegCode::ES => self.segs.es.set(val),
+            GuestCpuSegCode::FS => self.segs.fs.set(val),
+            GuestCpuSegCode::GS => self.segs.gs.set(val),
+            GuestCpuSegCode::SS => self.segs.ss.set(val),
+            GuestCpuSegCode::TR => self.segs.tr.set(val),
+        }
+    }
+
     pub fn get_cpu_mode(&self) -> GuestCpuMode {
         if (self.get_efer() & 0x400) != 0 {
             /* EFER.LMA = 1 */

@@ -7,7 +7,7 @@
 extern crate alloc;
 
 use super::error::{ErrExcp, TdxError};
-use super::gctx::GuestCpuContext;
+use super::gctx::{GuestCpuContext, GuestCpuSegCode};
 use super::interrupts::VCPU_KICK_VECTOR;
 use super::percpu::this_sirte_mut;
 use super::tdcall::tdvmcall_sti_halt;
@@ -33,9 +33,8 @@ const DR7_INIT_VALUE: u64 = 0x400;
 //
 // In Zombie/WaitForSipi/Running, needs check if new state is requested.
 // For the other state, the state machine is transfered automatically.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum VcpuState {
+pub enum VcpuState {
     // Waiting for initialization, or transfered from Running for reset.
     Zombie,
     // Transfered from Zombie and got prepared to init
@@ -109,6 +108,10 @@ impl Vcpu {
         &self.cb
     }
 
+    pub fn apic_id(&self) -> u32 {
+        self.apic_id
+    }
+
     pub fn run(&mut self) {
         if self.is_bsp {
             self.update_cur_state(VcpuState::PowerOnReset);
@@ -125,8 +128,11 @@ impl Vcpu {
         loop {
             match self.cur_state {
                 VcpuState::Zombie | VcpuState::WaitForSipi => {
-                    // TODO: Check if any new state is requested
-                    self.idle();
+                    if let Some(state) = self.cb.get_pending_state() {
+                        self.update_cur_state(state);
+                    } else {
+                        self.idle();
+                    }
                 }
                 VcpuState::PowerOnReset => {
                     self.reset(ResetMode::PowerOnReset);
@@ -136,8 +142,19 @@ impl Vcpu {
                     self.configure_vmcs();
                     self.update_cur_state(VcpuState::Running);
                 }
-                VcpuState::InitKicked => self.update_cur_state(VcpuState::WaitForSipi),
-                VcpuState::SipiKicked(_) => self.update_cur_state(VcpuState::Running),
+                VcpuState::InitKicked => {
+                    self.reset(ResetMode::InitReset);
+                    self.update_cur_state(VcpuState::WaitForSipi);
+                }
+                VcpuState::SipiKicked(sipi_vector) => {
+                    let mut cs_sel = self.ctx.get_seg(GuestCpuSegCode::CS);
+                    cs_sel.selector = ((sipi_vector >> 4) & 0xffff) as u16;
+                    cs_sel.base = (cs_sel.selector as u64) << 4;
+                    self.ctx.set_seg(GuestCpuSegCode::CS, cs_sel);
+                    self.ctx.set_rip(0);
+                    self.configure_vmcs();
+                    self.update_cur_state(VcpuState::Running);
+                }
                 VcpuState::Running => {
                     // Before handling request, disable IRQ until entering TDP guest so that
                     // the external interrupt can kick TDP guest out, and L1 VMM can handle
@@ -202,7 +219,10 @@ impl Vcpu {
                             }
                         }
                     }
-                    // TODO: Check if any new state is requested
+
+                    if let Some(state) = self.cb.get_pending_state() {
+                        self.update_cur_state(state);
+                    }
                 }
             }
         }

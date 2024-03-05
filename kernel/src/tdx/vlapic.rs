@@ -9,10 +9,10 @@ extern crate alloc;
 use super::error::{ErrExcp, TdxError};
 use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::tdcall::tdvmcall_wrmsr;
-use super::tdp::this_tdp;
+use super::tdp::{get_vcpu_cb, get_vcpu_cbs, this_tdp};
 use super::utils::TdpVmId;
 use super::vcpu::ResetMode;
-use super::vcpu_comm::VcpuReqFlags;
+use super::vcpu_comm::{VcpuCommBlock, VcpuReqFlags, VcpuStateReq};
 use super::vmcs_lib::{VmcsField32Control, VmcsField64Control, VMX_INT_INFO_VALID};
 use crate::address::{PhysAddr, VirtAddr};
 use crate::cpu::idt::common::FIRST_DYNAMIC_VECTOR;
@@ -21,6 +21,7 @@ use crate::locking::SpinLock;
 use crate::mm::alloc::allocate_zeroed_page;
 use crate::mm::{virt_to_phys, PAGE_SIZE};
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 // APIC Registers
@@ -83,6 +84,8 @@ const APIC_LDR_RESERVED: u32 = 0x00ffffff;
 // fields in DFR
 const APIC_DFR_RESERVED: u32 = 0x0fffffff;
 const APIC_DFR_MODEL_MASK: u32 = 0xf0000000;
+const APIC_DFR_MODEL_FLAT: u32 = 0xf0000000;
+const APIC_DFR_MODEL_CLUSTER: u32 = 0x00000000;
 
 // fields in SVR
 const APIC_SVR_VECTOR: u32 = 0x000000ff;
@@ -98,7 +101,17 @@ const APIC_VECTOR_MASK: u32 = 0x000000ff;
 const APIC_DELMODE_MASK: u32 = 0x00000700;
 const APIC_DELMODE_FIXED: u32 = 0x00000000;
 const APIC_DELMODE_NMI: u32 = 0x00000400;
+const APIC_DELMODE_INIT: u32 = 0x00000500;
+const APIC_DELMODE_STARTUP: u32 = 0x00000600;
 const APIC_DELSTAT_PEND: u32 = 0x00001000;
+const APIC_DEST_MASK: u32 = 0x000c0000;
+const APIC_DEST_NOSHORT: u32 = 0x00000000;
+const APIC_DEST_SELF: u32 = 0x00040000;
+const APIC_DEST_ALLISELF: u32 = 0x00080000;
+const APIC_DEST_ALLESELF: u32 = 0x000c0000;
+const APIC_DESTMODE_LOG: u32 = 0x00000800;
+const APIC_LEVEL_MASK: u32 = 0x00004000;
+const APIC_LEVEL_DEASSERT: u32 = 0x00000000;
 
 // fields in LVT1/2
 const APIC_LVT_VECTOR: u32 = 0x000000ff;
@@ -380,6 +393,136 @@ fn x2apic_msr_to_regoff(msr: u32) -> u32 {
 
 fn vector_prio(vector: u8) -> u8 {
     vector >> 4
+}
+
+fn vlapic_dest_match(vlapic: &Arc<dyn VlapicRegsRead>, dest: u32) -> bool {
+    let logical_id: u32;
+    let cluster_id: u32;
+    let dest_logical_id: u32;
+    let dest_cluster_id: u32;
+    let ldr = vlapic.get_reg(APIC_OFFSET_LDR);
+    if vlapic.is_x2apic() {
+        logical_id = ldr & 0xFFFF;
+        cluster_id = (ldr >> 16) & 0xFFFF;
+        dest_logical_id = dest & 0xFFFF;
+        dest_cluster_id = (dest >> 16) & 0xFFFF;
+        if (cluster_id == dest_cluster_id) && ((logical_id & dest_logical_id) != 0) {
+            return true;
+        }
+    } else {
+        let dfr = vlapic.get_reg(APIC_OFFSET_DFR);
+        if (dfr & APIC_DFR_MODEL_MASK) == APIC_DFR_MODEL_FLAT {
+            // In the "Flat Model" the MDA is interpreted as an 8-bit wide
+            // bitmask. This model is available in the xAPIC mode only.
+            logical_id = ldr >> 24;
+            dest_logical_id = dest & 0xff;
+            if (logical_id & dest_logical_id) != 0 {
+                return true;
+            }
+        } else if (dfr & APIC_DFR_MODEL_MASK) == APIC_DFR_MODEL_CLUSTER {
+            // In the "Cluster Model" the MDA is used to identify a
+            // specific cluster and a set of APICs in that cluster.
+            logical_id = (ldr >> 24) & 0xf;
+            cluster_id = ldr >> 28;
+            dest_logical_id = dest & 0xf;
+            dest_cluster_id = (dest >> 4) & 0xf;
+            if (cluster_id == dest_cluster_id) && ((logical_id & dest_logical_id) != 0) {
+                return true;
+            }
+        } else {
+            // Guest has configured a bad logical model for this vcpu.
+            log::warn!("vlapic has bad logical model {:#018x}", dfr);
+        }
+    }
+
+    false
+}
+
+fn vlapic_calc_dest_noshort(
+    vm_id: TdpVmId,
+    is_broadcast: bool,
+    dest: u32,
+    phys: bool,
+    lowprio: bool,
+) -> Vec<Arc<VcpuCommBlock>> {
+    let cbs: Vec<Arc<VcpuCommBlock>> = get_vcpu_cbs(vm_id).map_or(Vec::new(), |cbs| {
+        cbs.iter()
+            .filter_map(|(&apic_id, cb)| {
+                if is_broadcast {
+                    Some(cb.clone())
+                } else if phys {
+                    // Physical mode: "dest" is local APIC ID
+                    if apic_id == dest {
+                        Some(cb.clone())
+                    } else {
+                        None
+                    }
+                } else if vlapic_dest_match(&cb.vlapic, dest) {
+                    // Logical mode: "dest" is message destination addr
+                    //to be compared with the logical APIC ID in LDR.
+                    Some(cb.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    });
+
+    if !cbs.is_empty() && !is_broadcast && !phys && lowprio {
+        // Find out the lowest for logical mode if lowprio is true
+        let mut lowest_cb = &cbs[0];
+        let mut lowest_ppr = cbs[0].vlapic.get_reg(APIC_OFFSET_PPR);
+
+        for cb in cbs.iter().skip(1) {
+            let ppr = cb.vlapic.get_reg(APIC_OFFSET_PPR);
+            if lowest_ppr > ppr {
+                lowest_cb = cb;
+                lowest_ppr = ppr;
+            }
+        }
+        alloc::vec![lowest_cb.clone()]
+    } else {
+        cbs
+    }
+}
+
+fn active_vcpus(vm_id: TdpVmId, ex_self: Option<u32>) -> Vec<Arc<VcpuCommBlock>> {
+    get_vcpu_cbs(vm_id).map_or(Vec::new(), |cbs| {
+        cbs.iter()
+            .filter_map(|(&apic_id, cb)| {
+                if let Some(ex_self_apic_id) = ex_self {
+                    if apic_id != ex_self_apic_id {
+                        Some(cb.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    Some(cb.clone())
+                }
+            })
+            .collect()
+    })
+}
+
+fn vlapic_calc_dest(
+    vm_id: TdpVmId,
+    shorthand: u32,
+    is_broadcast: bool,
+    dest: u32,
+    phys: bool,
+    lowprio: bool,
+) -> Vec<Arc<VcpuCommBlock>> {
+    match shorthand {
+        APIC_DEST_NOSHORT => vlapic_calc_dest_noshort(vm_id, is_broadcast, dest, phys, lowprio),
+        APIC_DEST_SELF => {
+            get_vcpu_cb(vm_id, this_vcpu(vm_id).apic_id()).map_or(Vec::new(), |cb| alloc::vec![cb])
+        }
+        APIC_DEST_ALLISELF => active_vcpus(vm_id, None),
+        APIC_DEST_ALLESELF => active_vcpus(vm_id, Some(this_vcpu(vm_id).apic_id())),
+        _ => {
+            panic!("calc_dest: not support shorthand {}", shorthand);
+        }
+    }
 }
 
 pub struct Vlapic {
@@ -846,22 +989,48 @@ impl Vlapic {
         let icr_low = self.get_reg(APIC_OFFSET_ICR_LOW);
         let vec = (icr_low & APIC_VECTOR_MASK) as u8;
         let mode = icr_low & APIC_DELMODE_MASK;
+        let shorthand = icr_low & APIC_DEST_MASK;
+        let phys = (icr_low & APIC_DESTMODE_LOG) == 0;
+        let icr_high = self.get_reg(APIC_OFFSET_ICR_HI);
+        let (dest, is_broadcast) = if self.is_x2apic() {
+            (icr_high, icr_high == 0xffffffff)
+        } else {
+            let dest = icr_high >> APIC_ID_SHIFT;
+            (dest, dest == 0xff)
+        };
 
         if (mode == APIC_DELMODE_FIXED) && (vec < 16) {
             self.set_error(APIC_ESR_SEND_ILLEGAL_VECTOR);
         } else {
-            //TODO: currently only support UP which doesn't need to
-            //calculate destination. To support SMP, should calculate
-            //the destination to get the desired targets. And also needs
-            //to handle INIT-SIPI delivery mode.
-            if mode == APIC_DELMODE_FIXED {
-                self.set_intr(vec, false);
-            } else if mode == APIC_DELMODE_NMI {
-                this_vcpu(self.vm_id)
-                    .get_cb()
-                    .make_request(VcpuReqFlags::INJ_NMI);
-            } else {
-                log::warn!("vlapic: unsupported deliver mode 0x{:x}", mode);
+            let cbs = vlapic_calc_dest(self.vm_id, shorthand, is_broadcast, dest, phys, false);
+            for cb in cbs {
+                match mode {
+                    APIC_DELMODE_FIXED => {
+                        if cb.apic_id == self.apic_id {
+                            self.set_intr(vec, false);
+                        } else {
+                            // TODO: inject interrupt to remote vcpu
+                        }
+                    }
+                    APIC_DELMODE_NMI => cb.make_request(VcpuReqFlags::INJ_NMI),
+                    APIC_DELMODE_INIT => {
+                        if cb.apic_id == self.apic_id {
+                            log::warn!("vlapic: Not support sending INIT to self");
+                        } else if (icr_low & APIC_LEVEL_MASK) != APIC_LEVEL_DEASSERT {
+                            cb.make_pending_state(VcpuStateReq::Init);
+                        }
+                    }
+                    APIC_DELMODE_STARTUP => {
+                        if cb.apic_id == self.apic_id {
+                            log::warn!("vlapic: Not support sending SIPI to self");
+                        } else {
+                            cb.make_pending_state(VcpuStateReq::Sipi {
+                                entry: ((icr_low & APIC_VECTOR_MASK) << 12) as u64,
+                            });
+                        }
+                    }
+                    _ => log::warn!("vlapic: unsupported deliver mode 0x{:x}", mode),
+                }
             }
         }
     }

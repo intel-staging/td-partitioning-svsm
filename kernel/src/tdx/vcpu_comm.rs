@@ -6,7 +6,10 @@
 
 extern crate alloc;
 
+use super::vcpu::{kick_vcpu, VcpuState};
 use super::vlapic::VlapicRegsRead;
+use crate::locking::SpinLock;
+use alloc::collections::vec_deque::VecDeque;
 use alloc::sync::Arc;
 use bitflags::bitflags;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -26,11 +29,17 @@ bitflags! {
     }
 }
 
+pub enum VcpuStateReq {
+    Init,
+    Sipi { entry: u64 },
+}
+
 #[derive(Debug)]
 pub struct VcpuCommBlock {
     pub apic_id: u32,
     pub vlapic: Arc<dyn VlapicRegsRead>,
     pending_req: AtomicU64,
+    pending_state: SpinLock<VecDeque<VcpuState>>,
 }
 
 impl VcpuCommBlock {
@@ -39,11 +48,13 @@ impl VcpuCommBlock {
             apic_id,
             vlapic,
             pending_req: AtomicU64::new(0),
+            pending_state: SpinLock::new(VecDeque::new()),
         }
     }
 
     pub fn make_request(&self, req: VcpuReqFlags) {
         self.pending_req.fetch_or(req.bits(), Ordering::AcqRel);
+        kick_vcpu(self.apic_id);
     }
 
     pub fn test_and_clear_request(&self, req: VcpuReqFlags) -> bool {
@@ -62,5 +73,25 @@ impl VcpuCommBlock {
 
     pub fn is_request_empty(&self) -> bool {
         self.pending_req.load(Ordering::Acquire) == 0
+    }
+
+    pub fn make_pending_state(&self, req: VcpuStateReq) {
+        match req {
+            VcpuStateReq::Init => {
+                let mut pending_state = self.pending_state.lock();
+                pending_state.push_back(VcpuState::Zombie);
+                pending_state.push_back(VcpuState::InitKicked);
+            }
+            VcpuStateReq::Sipi { entry } => {
+                let mut pending_state = self.pending_state.lock();
+                pending_state.push_back(VcpuState::SipiKicked(entry));
+            }
+        }
+
+        kick_vcpu(self.apic_id);
+    }
+
+    pub fn get_pending_state(&self) -> Option<VcpuState> {
+        self.pending_state.lock().pop_front()
     }
 }

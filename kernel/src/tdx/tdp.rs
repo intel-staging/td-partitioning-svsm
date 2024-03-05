@@ -176,3 +176,7 @@ pub fn get_tdp_vm_id(idx: usize) -> Option<TdpVmId> {
         None
     }
 }
+
+pub fn get_vcpu_cbs(vm_id: TdpVmId) -> Option<Arc<BTreeMap<u32, Arc<VcpuCommBlock>>>> {
+    TDPCBS[vm_id.index()].get().cloned()
+}
