@@ -15,8 +15,12 @@
 /* Stage2 is loaded at 64kb */
 #define STAGE2_START		0x10000
 
-/* Stage1 stack starts at 632kb with size 4kb */
+/* Stage1 stack starts at 632kb with size (4kb - 4) */
 #define STAGE1_STACK		0x9e000
+
+/* Flag for AP signaling at the bottom of the stage1 stack page */
+#define STAGE2_FLAG		(STAGE1_STACK - 0x1000)
+#define STAGE2_MAGIC		0xdecafbad
 
 .text
 	.section ".startup.text","ax"
@@ -68,6 +72,8 @@ startup_32:
 
 	/* Save TD CPU index */
 	mov	%esi, %edx
+	test	%edx, %edx
+	jnz	.Lap_entry
 
 .Lload_stage2:
 	leal	stage2_bin(%ebp), %esi
@@ -85,12 +91,15 @@ startup_32:
 	shrl	$2, %ecx
 	rep movsl
 
-	/* Setup stack for stage 2*/
+	/* Mark it as done */
+	movl	$STAGE2_FLAG, %eax
+	movl	$STAGE2_MAGIC, (%eax)
+
+	/* Setup BSP stack for stage 2 */
 	movl	$STAGE2_START, %esp
 
-	/* Write startup information to stage2 stack */
+	/* Write startup information to BSP stage2 stack */
 	xorl 	%eax, %eax
-	pushl	%eax
 	pushl	%eax
 
 	leal	kernel_fs_bin_end(%ebp), %edi
@@ -105,6 +114,16 @@ startup_32:
 	leal	kernel_elf(%ebp), %edi
 	pushl	%edi
 
+	jmp	.Lbsp_entry
+
+.Lap_entry:
+	movl	$STAGE2_FLAG, %eax
+.Lap_wait:
+	movl	(%eax), %ebx
+	cmpl	$STAGE2_MAGIC, %ebx
+	jne	.Lap_wait
+
+.Lbsp_entry:
 	/* Jump to stage 2 */
 	mov	%edx, %esi
 	movl	$STAGE2_START, %eax
