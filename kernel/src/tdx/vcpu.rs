@@ -260,7 +260,12 @@ impl Vcpu {
             self.cb.make_request(VcpuReqFlags::INJ_NMI);
         }
 
-        if self.cb.has_request(VcpuReqFlags::INJ_NMI) {
+        // Handle interrupt event after nmi/exceptions
+        if self.cb.test_and_clear_request(VcpuReqFlags::REQ_EVENT) {
+            self.virq.inject_intr(&mut self.vlapic);
+        }
+
+        if self.cb.has_request(VcpuReqFlags::INJ_NMI) || self.vlapic.has_pending_delivery_intr() {
             // Enable IRQ windown if there is pending event not injected
             self.vmcs.enable_irq_window();
         }
@@ -279,6 +284,7 @@ impl Vcpu {
                 write_msr(MSR_IA32_PRED_CMD, 1).unwrap();
 
                 self.ctx.post_vmexit();
+                self.virq.post_vmexit();
                 Some(l2exit_info)
             }
             VpEnterRet::NoL2Enter => None,

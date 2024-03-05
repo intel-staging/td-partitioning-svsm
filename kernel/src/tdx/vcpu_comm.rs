@@ -14,6 +14,7 @@ bitflags! {
         const VTIMER            = 1 << 1;
         const SIRTE             = 1 << 2;
         const INJ_NMI           = 1 << 3;
+        const REQ_EVENT         = 1 << 4;
     }
 }
 

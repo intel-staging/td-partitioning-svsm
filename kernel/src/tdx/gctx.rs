@@ -423,6 +423,10 @@ impl GuestCpuContext {
         self.tdp_ctx.intr_status |= vec as u16;
     }
 
+    pub fn get_rflags(&self) -> u64 {
+        self.tdp_ctx.rflags
+    }
+
     pub fn pre_vmentry(&mut self) -> u64 {
         // load ia32_efer if updated
         self.ia32_efer.sync_cache();

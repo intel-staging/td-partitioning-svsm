@@ -11,7 +11,7 @@ use super::tdp::this_tdp;
 use super::utils::TdpVmId;
 use super::vcpu::ResetMode;
 use super::vcpu_comm::VcpuReqFlags;
-use super::vmcs_lib::VmcsField64Control;
+use super::vmcs_lib::{VmcsField32Control, VmcsField64Control, VMX_INT_INFO_VALID};
 use crate::address::{PhysAddr, VirtAddr};
 use crate::cpu::idt::common::FIRST_DYNAMIC_VECTOR;
 use crate::cpu::msr::{rdtsc, MSR_IA32_TSC_DEADLINE};
@@ -325,6 +325,16 @@ impl VlapicRegs {
         let old_v = apic_page.irr[idx].v;
         apic_page.irr[idx].v |= val;
         (old_v & val) != 0
+    }
+
+    fn set_irr(&mut self, idx: usize, val: u32) {
+        let apic_page = self.reg_page_mut();
+        apic_page.irr[idx].v |= val;
+    }
+
+    fn clear_irr(&mut self, idx: usize, val: u32) {
+        let apic_page = self.reg_page_mut();
+        apic_page.irr[idx].v &= !val;
     }
 }
 
@@ -779,12 +789,14 @@ impl Vlapic {
             // update TMR if interrupt trigger mode has changed
             self.set_tmr(vector, level);
             self.set_pir(vector);
-            // TODO: Inject interrupt to guest
         } else if self.set_irr(vector) {
             // xapic should not trigger EOI bitmap update
             self.set_tmr(vector, level);
-            // TODO: Inject interrupt to guest
         }
+
+        this_vcpu(self.vm_id)
+            .get_cb()
+            .make_request(VcpuReqFlags::REQ_EVENT);
     }
 
     fn set_error(&mut self, err_mask: u32) {
@@ -844,6 +856,62 @@ impl Vlapic {
                 stop_tsc_deadline_timer();
             }
         }
+    }
+
+    fn enabled(&self) -> bool {
+        (self.get_apicbase() & APICBASE_ENABLED != 0)
+            && (self.get_reg(APIC_OFFSET_SVR) & APIC_SVR_ENABLE != 0)
+    }
+
+    fn sync_pir_to_irr(&mut self) {
+        for i in 0..4 {
+            let val = self.pir[i].load(Ordering::Acquire);
+            if val != 0 {
+                self.regs.set_irr(i * 2, (val & 0xffff_ffff) as u32);
+                self.regs
+                    .set_irr(i * 2 + 1, ((val >> 32) & 0xffff_ffff) as u32);
+                self.pir[i].store(0, Ordering::Release);
+            }
+        }
+    }
+
+    fn find_highest_irr(&self) -> u8 {
+        for i in (0..8).rev() {
+            let val = self.get_reg(APIC_OFFSET_IRR0 + i * 16);
+            if val != 0 {
+                let bitpos = 31 - val.leading_zeros();
+                return (32 * i + bitpos) as u8;
+            }
+        }
+        0
+    }
+
+    fn find_deliverable_intr(&self) -> u8 {
+        let vector = self.find_highest_irr();
+        if vector_prio(vector) > vector_prio(self.get_reg(APIC_OFFSET_PPR) as u8) {
+            vector
+        } else {
+            0
+        }
+    }
+
+    fn update_irr_isr_ppr(&mut self, vector: u8) {
+        let vec_mask = 1u32 << (vector & 0x1f);
+        let idx = (vector as usize) >> 5;
+        // clear irr
+        self.regs.clear_irr(idx, vec_mask);
+        // set isr
+        self.regs.clear_isr(idx, vec_mask);
+        self.update_ppr();
+    }
+
+    fn update_tpr_threshold(&self) {
+        let tpr = (self.get_reg(APIC_OFFSET_TPR) as u8) >> 4;
+        let irr = self.find_highest_irr() >> 4;
+        let threshold = if irr > tpr { 0 } else { irr };
+        this_vcpu(self.vm_id)
+            .get_vmcs()
+            .write32(VmcsField32Control::TPR_THRESHOLD, threshold as u32);
     }
 
     // xapic:  TPR shadow
@@ -1031,6 +1099,54 @@ impl Vlapic {
         // restart timer if it is period
         if self.lvtt_is_period() && self.set_expiration() {
             start_tsc_deadline_timer(self.vtimer.timeout);
+        }
+    }
+
+    // xapic:  inject intr by set int_info vmcs field
+    // x2apic: accept intr by set int stat RVI vmcs field
+    pub fn inject_intr(&mut self, guest_irq_enabled: bool, injected: bool) {
+        if self.enabled() {
+            if self.is_x2apic() {
+                self.sync_pir_to_irr();
+                let vector = self.find_highest_irr();
+                if vector != 0 {
+                    // write highest vector to RVI(low byte) in guest status field
+                    this_vcpu_mut(self.vm_id)
+                        .get_ctx_mut()
+                        .set_intr_status(vector);
+                }
+            } else {
+                if guest_irq_enabled && !injected {
+                    self.update_ppr();
+                    let vector = self.find_deliverable_intr();
+                    if vector != 0 {
+                        this_vcpu(self.vm_id).get_vmcs().write32(
+                            VmcsField32Control::VM_ENTRY_INTR_INFO_FIELD,
+                            VMX_INT_INFO_VALID | vector as u32,
+                        );
+                        self.in_service_vec = vector;
+                        self.update_irr_isr_ppr(vector);
+                    }
+                }
+                self.update_tpr_threshold();
+            }
+        }
+    }
+
+    // no pending delivery intr for x2apic mode with VID enabled.
+    pub fn has_pending_delivery_intr(&mut self) -> bool {
+        if self.is_x2apic() {
+            false
+        } else {
+            self.update_ppr();
+            if self.find_deliverable_intr() != 0 {
+                this_vcpu(self.vm_id)
+                    .get_cb()
+                    .make_request(VcpuReqFlags::REQ_EVENT);
+                true
+            } else {
+                false
+            }
         }
     }
 }
