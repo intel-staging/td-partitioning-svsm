@@ -4,25 +4,38 @@
 //
 // Author: Joerg Roedel <jroedel@suse.de>
 
-use super::cpuid::cpuid_table;
+use super::cpuid::{cpuid, Cpuid01Edx, Cpuid80000001Edx};
+use lazy_static::lazy_static;
 
-const X86_FEATURE_NX: u32 = 20;
-const X86_FEATURE_PGE: u32 = 13;
+// CPUID level 0x00000001 (EDX), word 0
+pub const X86_FEATURE_PGE: u32 = Cpuid01Edx::PGE.bits().trailing_zeros();
+// CPUID level 0x80000001 (EDX), word 1
+pub const X86_FEATURE_NX: u32 = 32 + Cpuid80000001Edx::NX.bits().trailing_zeros();
 
-pub fn cpu_has_nx() -> bool {
-    let ret = cpuid_table(0x80000001);
+const FEATURE_WORDS: usize = 2;
 
-    match ret {
-        None => false,
-        Some(c) => (c.edx >> X86_FEATURE_NX) & 1 == 1,
+struct X86Features {
+    word: [u32; FEATURE_WORDS],
+}
+
+impl X86Features {
+    fn new() -> Self {
+        let mut word = [0; FEATURE_WORDS];
+        // Word 0 contains CPUID level 0x00000001 EDX
+        let cpuid01 = cpuid(0x00000001).unwrap();
+        word[0] = cpuid01.edx;
+        // Word 1 contains CPUID level 0x80000001 EDX
+        let cpuid80000001 = cpuid(0x80000001).unwrap();
+        word[1] = cpuid80000001.edx;
+
+        X86Features { word }
     }
 }
 
-pub fn cpu_has_pge() -> bool {
-    let ret = cpuid_table(0x00000001);
+lazy_static! {
+    static ref X86_FEATURES: X86Features = X86Features::new();
+}
 
-    match ret {
-        None => false,
-        Some(c) => (c.edx >> X86_FEATURE_PGE) & 1 == 1,
-    }
+pub fn cpu_has_feature(feat: u32) -> bool {
+    X86_FEATURES.word[(feat / 32) as usize] & (feat % 32) != 0
 }

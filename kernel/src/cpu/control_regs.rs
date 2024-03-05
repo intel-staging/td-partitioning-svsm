@@ -4,7 +4,7 @@
 //
 // Author: Joerg Roedel <jroedel@suse.de>
 
-use super::features::cpu_has_pge;
+use super::features::{cpu_has_feature, X86_FEATURE_PGE};
 use crate::address::{Address, PhysAddr};
 use bitflags::bitflags;
 use core::arch::asm;
@@ -24,7 +24,7 @@ pub fn cr4_init() {
 
     cr4.insert(CR4Flags::PSE); // Enable Page Size Extensions
 
-    if cpu_has_pge() {
+    if cpu_has_feature(X86_FEATURE_PGE) {
         cr4.insert(CR4Flags::PGE); // Enable Global Pages
     }
 

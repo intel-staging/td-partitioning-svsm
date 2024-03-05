@@ -4,7 +4,7 @@
 //
 // Author: Joerg Roedel <jroedel@suse.de>
 
-use super::features::cpu_has_nx;
+use super::features::{cpu_has_feature, X86_FEATURE_NX};
 use super::msr::{read_msr, write_msr, EFER};
 use bitflags::bitflags;
 
@@ -36,7 +36,7 @@ pub fn write_efer(efer: EFERFlags) {
 pub fn efer_init() {
     let mut efer = read_efer();
 
-    if cpu_has_nx() {
+    if cpu_has_feature(X86_FEATURE_NX) {
         efer.insert(EFERFlags::NXE);
     }
 

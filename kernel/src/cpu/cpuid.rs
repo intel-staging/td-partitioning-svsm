@@ -5,6 +5,7 @@
 // Author: Joerg Roedel <jroedel@suse.de>
 
 use crate::utils::immut_after_init::ImmutAfterInitRef;
+use bitflags::bitflags;
 use core::arch::x86_64::__cpuid;
 use cpuarch::snp_cpuid::SnpCpuidTable;
 use log;
@@ -106,5 +107,51 @@ pub fn dump_cpuid_table() {
         let edx_out = CPUID_PAGE.func[i].edx_out;
         log::trace!("EAX_IN: {:#010x} ECX_IN: {:#010x} XCR0_IN: {:#010x} XSS_IN: {:#010x} EAX_OUT: {:#010x} EBX_OUT: {:#010x} ECX_OUT: {:#010x} EDX_OUT: {:#010x}",
                     eax_in, ecx_in, xcr0_in, xss_in, eax_out, ebx_out, ecx_out, edx_out);
+    }
+}
+
+bitflags! {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Cpuid01Edx: u32 {
+        const FPU       = 1 << 0;
+        const VME       = 1 << 1;
+        const DE        = 1 << 2;
+        const PSE       = 1 << 3;
+        const TSC       = 1 << 4;
+        const MSR       = 1 << 5;
+        const PAE       = 1 << 6;
+        const MCE       = 1 << 7;
+        const CX8       = 1 << 8;
+        const APIC      = 1 << 9;
+        const SEP       = 1 << 11;
+        const MTRR      = 1 << 12;
+        const PGE       = 1 << 13;
+        const MCA       = 1 << 14;
+        const CMOV      = 1 << 15;
+        const PAT       = 1 << 16;
+        const PSE36     = 1 << 17;
+        const PSN       = 1 << 18;
+        const CLFSH     = 1 << 19;
+        const DTES      = 1 << 21;
+        const ACPI      = 1 << 22;
+        const MMX       = 1 << 23;
+        const FXSR      = 1 << 24;
+        const SSE       = 1 << 25;
+        const SSE2      = 1 << 26;
+        const SS        = 1 << 27;
+        const HTT       = 1 << 28;
+        const TM        = 1 << 29;
+        const PBE       = 1 << 31;
+    }
+}
+
+bitflags! {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Cpuid80000001Edx: u32 {
+        const SYSCALL       = 1 << 11;
+        const NX            = 1 << 20;
+        const GBPAGES       = 1 << 26;
+        const RDTSC         = 1 << 27;
+        const LM            = 1 << 29;
     }
 }
