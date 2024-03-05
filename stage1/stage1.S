@@ -15,7 +15,8 @@
 /* Stage2 is loaded at 64kb */
 #define STAGE2_START		0x10000
 
-#define STAGE1_STACK		0x10000
+/* Stage1 stack starts at 632kb with size 4kb */
+#define STAGE1_STACK		0x9e000
 
 .text
 	.section ".startup.text","ax"
@@ -32,7 +33,15 @@ startup_32:
 	andl	$~((1 << 30) | (1 << 29)), %eax
 	mov	%eax, %cr0
 
-	/* Setup Stack */
+	/*
+	 * Setup Stack
+	 *
+	 * Since stage1 stack is only used for getting run-offset,
+	 * it should be OK to be shared across all CPUs.
+	 *
+	 * The stack starts at 632kb to ensure it won't get
+	 * clobbered by the stage2 stack.
+	 */
 	movl	$STAGE1_STACK, %esp
 
 	/* Store run-offset to %ebp */
@@ -64,6 +73,15 @@ startup_32:
 	leal	stage2_bin(%ebp), %esi
 	movl	$STAGE2_START, %edi
 	movl	stage2_size(%ebp), %ecx
+
+	/* Make sure stage2 itself doesn't clobber stage1 stack */
+	mov	%ecx, %eax
+	addl	$STAGE2_START, %eax
+	mov	$STAGE1_STACK, %ebx
+	subl	$0x1000, %ebx
+	cmpl	%ebx, %eax
+	jg	.Lpanic
+
 	shrl	$2, %ecx
 	rep movsl
 
@@ -91,6 +109,9 @@ startup_32:
 	mov	%edx, %esi
 	movl	$STAGE2_START, %eax
 	jmp	*%eax
+
+.Lpanic:
+	ud2
 .data
 
 	.align	4

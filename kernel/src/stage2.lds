@@ -36,8 +36,10 @@ SECTIONS
 	. = ALIGN(4096);
 	heap_start = .;
 
-	. = 632k;
+	. = 628k;
 	heap_end = .;
+	STAGE1_STACK = .;
+	. = 632k;
 	SECRETS_PAGE = .;
 	. = 636k;
 	CPUID_PAGE = .;
