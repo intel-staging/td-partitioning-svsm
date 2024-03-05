@@ -10,7 +10,7 @@
 use svsm::fw_meta::{print_fw_meta, validate_fw_memory, SevFWMetaData};
 
 use bootlib::kernel_launch::KernelLaunchInfo;
-use core::arch::global_asm;
+use core::arch::{asm, global_asm};
 use core::mem::{align_of, size_of};
 use core::panic::PanicInfo;
 use core::ptr;
@@ -347,10 +347,12 @@ pub extern "C" fn svsm_start(li: &KernelLaunchInfo, vb_addr: usize) {
         .expect("Failed to run percpu.setup_on_cpu()");
     bsp_percpu.load();
 
-    // Idle task must be allocated after PerCPU data is mapped
-    bsp_percpu
-        .setup_idle_task(svsm_main)
-        .expect("Failed to allocate idle task for BSP");
+    if !is_tdx() {
+        // Idle task must be allocated after PerCPU data is mapped
+        bsp_percpu
+            .setup_idle_task(svsm_main)
+            .expect("Failed to allocate idle task for BSP");
+    }
 
     idt_init();
 
@@ -385,9 +387,25 @@ pub extern "C" fn svsm_start(li: &KernelLaunchInfo, vb_addr: usize) {
 
     log::info!("BSP Runtime stack starts @ {:#018x}", bp);
 
+    // FIXME
+    if is_tdx() {
+        // Enable runtime stack and jump to main function
+        unsafe {
+            asm!("movq  %rax, %rsp
+                  jmp   svsm_main",
+                  in("rax") bp.bits(),
+                  options(att_syntax));
+        }
+    }
+
     schedule_init();
 
     panic!("SVSM entry point terminated unexpectedly");
+}
+
+fn tdpvp_start() {
+    //TODO: run tdpvp
+    unreachable!("Should never return from run_tdp!");
 }
 
 #[no_mangle]
@@ -465,6 +483,10 @@ pub extern "C" fn svsm_main() {
     }
 
     virt_log_usage();
+
+    if is_tdx() {
+        tdpvp_start();
+    }
 
     if config.should_launch_fw() {
         if let Err(e) = launch_fw(&config) {
