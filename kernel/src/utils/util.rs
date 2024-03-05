@@ -5,6 +5,8 @@
 // Author: Joerg Roedel <jroedel@suse.de>
 
 use crate::address::{Address, VirtAddr};
+use crate::cpu::features::is_tdx;
+use crate::tdx::tdvmcall_halt;
 use crate::types::PAGE_SIZE;
 use core::arch::asm;
 
@@ -17,8 +19,12 @@ pub fn align_down(addr: usize, align: usize) -> usize {
 }
 
 pub fn halt() {
-    unsafe {
-        asm!("hlt", options(att_syntax));
+    if is_tdx() {
+        tdvmcall_halt();
+    } else {
+        unsafe {
+            asm!("hlt", options(att_syntax));
+        }
     }
 }
 
