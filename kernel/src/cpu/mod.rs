@@ -20,6 +20,7 @@ pub mod smp;
 pub mod tlb;
 pub mod tss;
 pub mod vc;
+pub mod ve;
 pub mod vmsa;
 
 pub use gdt::{gdt, gdt_mut};

@@ -9,11 +9,12 @@ use super::super::extable::handle_exception_table;
 use super::super::percpu::this_cpu;
 use super::super::tss::IST_DF;
 use super::super::vc::handle_vc_exception;
+use super::super::ve::handle_virtualization_exception;
 use super::common::PF_ERROR_WRITE;
 use super::common::{
     idt_mut, IdtEntry, AC_VECTOR, BP_VECTOR, BR_VECTOR, CP_VECTOR, DB_VECTOR, DE_VECTOR, DF_VECTOR,
     GP_VECTOR, HV_VECTOR, MCE_VECTOR, MF_VECTOR, NMI_VECTOR, NM_VECTOR, NP_VECTOR, OF_VECTOR,
-    PF_VECTOR, SS_VECTOR, SX_VECTOR, TS_VECTOR, UD_VECTOR, VC_VECTOR, XF_VECTOR,
+    PF_VECTOR, SS_VECTOR, SX_VECTOR, TS_VECTOR, UD_VECTOR, VC_VECTOR, VE_VECTOR, XF_VECTOR,
 };
 use crate::address::VirtAddr;
 use crate::cpu::X86ExceptionContext;
@@ -39,6 +40,7 @@ extern "C" {
     fn asm_entry_ac();
     fn asm_entry_mce();
     fn asm_entry_xf();
+    fn asm_entry_ve();
     fn asm_entry_cp();
     fn asm_entry_hv();
     fn asm_entry_vc();
@@ -72,6 +74,7 @@ pub fn early_idt_init() {
     idt.set_entry(AC_VECTOR, IdtEntry::entry(asm_entry_ac));
     idt.set_entry(MCE_VECTOR, IdtEntry::entry(asm_entry_mce));
     idt.set_entry(XF_VECTOR, IdtEntry::entry(asm_entry_xf));
+    idt.set_entry(VE_VECTOR, IdtEntry::entry(asm_entry_ve));
     idt.set_entry(CP_VECTOR, IdtEntry::entry(asm_entry_cp));
     idt.set_entry(HV_VECTOR, IdtEntry::entry(asm_entry_hv));
     idt.set_entry(VC_VECTOR, IdtEntry::entry(asm_entry_vc));
@@ -149,6 +152,12 @@ extern "C" fn ex_handler_hypervisor_injection(_ctx: &mut X86ExceptionContext) {
     // interrupt occurs, it will be processed prior to the next exit.
     // There are no NMI sources, and #MC cannot be handled anyway
     // and can safely be ignored.
+}
+
+// Virtualization Exception handler
+#[no_mangle]
+extern "C" fn ex_handler_ve(ctx: &mut X86ExceptionContext) {
+    handle_virtualization_exception(ctx);
 }
 
 // VMM Communication handler
