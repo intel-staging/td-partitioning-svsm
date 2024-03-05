@@ -100,7 +100,9 @@ pub fn stack_base_pointer(stack: VirtAddr) -> VirtAddr {
     VirtAddr::from((stack.bits() & !(STACK_SIZE - 1)) + STACK_SIZE)
 }
 
+#[allow(unreachable_code, unused)]
 pub fn free_stack(stack: VirtAddr) {
+    panic!("free_stack not supported");
     let mut pages: [VirtAddr; STACK_PAGES] = [VirtAddr::null(); STACK_PAGES];
 
     let mut pgtable = get_init_pgtable_locked();

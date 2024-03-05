@@ -7,7 +7,7 @@
 use super::pagetable::PTEntryFlags;
 use crate::address::{Address, PhysAddr, VirtAddr};
 use crate::cpu::percpu::this_cpu_mut;
-use crate::cpu::tlb::flush_address_sync;
+use crate::cpu::tlb::flush_address_local;
 use crate::error::SvsmError;
 use crate::mm::virtualrange::{
     virt_alloc_range_2m, virt_alloc_range_4k, virt_free_range_2m, virt_free_range_4k,
@@ -79,11 +79,22 @@ impl Drop for PerCPUPageMappingGuard {
     fn drop(&mut self) {
         if self.huge {
             this_cpu_mut().get_pgtable().unmap_region_2m(self.mapping);
+            for addr in (self.mapping.start().bits()..self.mapping.end().bits())
+                .step_by(PAGE_SIZE_2M)
+                .map(VirtAddr::from)
+            {
+                flush_address_local(addr);
+            }
             virt_free_range_2m(self.mapping);
         } else {
             this_cpu_mut().get_pgtable().unmap_region_4k(self.mapping);
+            for addr in (self.mapping.start().bits()..self.mapping.end().bits())
+                .step_by(PAGE_SIZE)
+                .map(VirtAddr::from)
+            {
+                flush_address_local(addr);
+            }
             virt_free_range_4k(self.mapping);
         }
-        flush_address_sync(self.mapping.start());
     }
 }

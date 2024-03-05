@@ -405,7 +405,10 @@ impl PageTable {
         }
     }
 
+    #[allow(unreachable_code, unused_variables)]
     fn do_split_4k(entry: &mut PTEntry) -> Result<(), SvsmError> {
+        panic!("do_split_4k not supported");
+
         let page = PageTable::allocate_page_table()?;
         let mut flags = entry.flags();
 

@@ -30,27 +30,37 @@ fn do_tlbsync() {
     }
 }
 
+#[allow(unreachable_code, unused)]
 pub fn flush_tlb() {
+    panic!("flush_tlb not supported");
     let rax: u64 = INVLPGB_VALID_ASID;
     do_invlpgb(rax, 0, 0);
 }
 
+#[allow(unreachable_code, unused)]
 pub fn flush_tlb_sync() {
+    panic!("flush_tlb_sync not supported");
     flush_tlb();
     do_tlbsync();
 }
 
+#[allow(unreachable_code, unused)]
 pub fn flush_tlb_global() {
+    panic!("flush_tlb_global not supported");
     let rax: u64 = INVLPGB_VALID_ASID | INVLPGB_VALID_GLOBAL;
     do_invlpgb(rax, 0, 0);
 }
 
+#[allow(unreachable_code, unused)]
 pub fn flush_tlb_global_sync() {
+    panic!("flush_tlb_global_sync not supported");
     flush_tlb_global();
     do_tlbsync();
 }
 
+#[allow(unreachable_code, unused)]
 pub fn flush_address(va: VirtAddr) {
+    panic!("flush_address not supported");
     let rax: u64 = (va.page_align().bits() as u64)
         | INVLPGB_VALID_VA
         | INVLPGB_VALID_ASID
@@ -58,7 +68,19 @@ pub fn flush_address(va: VirtAddr) {
     do_invlpgb(rax, 0, 0);
 }
 
+#[allow(unreachable_code, unused)]
 pub fn flush_address_sync(va: VirtAddr) {
+    panic!("flush_address_sync not supported");
     flush_address(va);
     do_tlbsync();
+}
+
+// copied from x86_64::instructions::tlb::flush
+#[inline]
+pub fn flush_address_local(va: VirtAddr) {
+    unsafe {
+        asm!("invlpg [{}]",
+             in(reg) va.page_align().bits() as u64,
+             options(nostack, preserves_flags));
+    }
 }
