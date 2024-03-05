@@ -369,6 +369,7 @@ pub enum TdCallLeaf {
     TdgVpVmcall,
     TdgVpInfo,
     TdgVmWr,
+    TdgMemAccept,
     UnSupported,
 }
 
@@ -377,6 +378,7 @@ impl From<u64> for TdCallLeaf {
         match val {
             0 => TdCallLeaf::TdgVpVmcall,
             1 => TdCallLeaf::TdgVpInfo,
+            6 => TdCallLeaf::TdgMemAccept,
             8 => TdCallLeaf::TdgVmWr,
             _ => TdCallLeaf::UnSupported,
         }

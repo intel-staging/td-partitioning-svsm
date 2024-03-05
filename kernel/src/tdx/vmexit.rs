@@ -590,6 +590,8 @@ impl VmExit {
         let ret = match tdcall {
             TdCallLeaf::TdgVpVmcall => return self.handle_tdg_vp_vmcall(ctx),
             TdCallLeaf::TdgVpInfo => self.handle_tdg_vp_info(ctx),
+            // ignore mem accept tdcall from L2 guest
+            TdCallLeaf::TdgMemAccept => TDX_SUCCESS,
             TdCallLeaf::TdgVmWr => {
                 let rcx = ctx.get_gpreg(GuestCpuGPRegCode::Rcx);
                 let rdx = ctx.get_gpreg(GuestCpuGPRegCode::Rdx);
