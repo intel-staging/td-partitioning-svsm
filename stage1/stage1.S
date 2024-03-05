@@ -41,6 +41,26 @@ startup_32:
 	leal	2b, %eax
 	subl	%eax, %ebp
 
+	/* Default to CPU 0 */
+	xorl	%edx, %edx
+
+	/* Discover CPU vendor using CPUID (0) */
+	xorl	%eax, %eax
+	cpuid
+	/* "Genu" */
+	cmpl	$0x756e6547, %ebx
+	jne	.Lload_stage2
+	/* "ineI" */
+	cmpl	$0x49656e69, %edx
+	jne	.Lload_stage2
+	/* "ntel" */
+	cmpl	$0x6c65746e, %ecx
+	jne	.Lload_stage2
+
+	/* Save TD CPU index */
+	mov	%esi, %edx
+
+.Lload_stage2:
 	leal	stage2_bin(%ebp), %esi
 	movl	$STAGE2_START, %edi
 	movl	stage2_size(%ebp), %ecx
@@ -68,6 +88,7 @@ startup_32:
 	pushl	%edi
 
 	/* Jump to stage 2 */
+	mov	%edx, %esi
 	movl	$STAGE2_START, %eax
 	jmp	*%eax
 .data
