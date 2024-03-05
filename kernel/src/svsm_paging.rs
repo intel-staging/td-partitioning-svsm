@@ -6,6 +6,7 @@
 
 use crate::address::{Address, PhysAddr, VirtAddr};
 use crate::config::SvsmConfig;
+use crate::cpu::features::is_sev;
 use crate::cpu::ghcb::current_ghcb;
 use crate::elf;
 use crate::error::SvsmError;
@@ -15,8 +16,8 @@ use crate::mm::pagetable::{set_init_pgtable, PTEntryFlags, PageTable, PageTableR
 use crate::mm::PerCPUPageMappingGuard;
 use crate::sev::ghcb::PageStateChangeOp;
 use crate::sev::{pvalidate, PvalidateOp};
-use crate::types::PageSize;
-use crate::utils::MemoryRegion;
+use crate::types::{PageSize, PAGE_SIZE};
+use crate::utils::{zero_mem_region, MemoryRegion};
 use bootlib::kernel_launch::KernelLaunchInfo;
 
 struct IgvmParamInfo<'a> {
@@ -117,7 +118,11 @@ fn invalidate_boot_memory_region(
         let guard = PerCPUPageMappingGuard::create_4k(paddr)?;
         let vaddr = guard.virt_addr();
 
-        pvalidate(vaddr, PageSize::Regular, PvalidateOp::Invalid)?;
+        if is_sev() {
+            pvalidate(vaddr, PageSize::Regular, PvalidateOp::Invalid)?;
+        } else {
+            zero_mem_region(vaddr, vaddr + PAGE_SIZE);
+        }
     }
 
     if config.page_state_change_required() && !region.is_empty() {

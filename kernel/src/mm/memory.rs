@@ -8,6 +8,7 @@ extern crate alloc;
 
 use crate::address::{Address, PhysAddr};
 use crate::config::SvsmConfig;
+use crate::cpu::features::is_sev;
 use crate::cpu::percpu::PERCPU_VMSAS;
 use crate::error::SvsmError;
 use crate::locking::RWLock;
@@ -95,13 +96,15 @@ pub fn init_memory_map(
 /// Returns `true` if the provided physical address `paddr` is valid, i.e.
 /// it is within the configured memory regions, otherwise returns `false`.
 pub fn valid_phys_address(paddr: PhysAddr) -> bool {
-    let page_addr = paddr.page_align();
+    if is_sev() {
+        let page_addr = paddr.page_align();
 
-    if PERCPU_VMSAS.exists(page_addr) {
-        return false;
-    }
-    if page_addr == LAUNCH_VMSA_ADDR {
-        return false;
+        if PERCPU_VMSAS.exists(page_addr) {
+            return false;
+        }
+        if page_addr == LAUNCH_VMSA_ADDR {
+            return false;
+        }
     }
 
     MEMORY_MAP

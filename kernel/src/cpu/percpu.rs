@@ -9,6 +9,7 @@ extern crate alloc;
 use super::gdt_mut;
 use super::tss::{X86Tss, IST_DF};
 use crate::address::{Address, PhysAddr, VirtAddr};
+use crate::cpu::features::is_sev;
 use crate::cpu::tss::TSS_LIMIT;
 use crate::cpu::vmsa::init_guest_vmsa;
 use crate::cpu::vmsa::vmsa_mut_ref_from_vaddr;
@@ -440,8 +441,10 @@ impl PerCpu {
         // Reserve ranges for temporary mappings
         self.initialize_vm_ranges()?;
 
-        // Setup GHCB
-        self.setup_ghcb()?;
+        if is_sev() {
+            // Setup GHCB
+            self.setup_ghcb()?;
+        }
 
         // Allocate per-cpu init stack
         self.allocate_init_stack()?;
@@ -460,7 +463,10 @@ impl PerCpu {
 
     // Setup code which needs to run on the target CPU
     pub fn setup_on_cpu(&self) -> Result<(), SvsmError> {
-        self.register_ghcb()
+        if is_sev() {
+            self.register_ghcb()?;
+        }
+        Ok(())
     }
 
     pub fn setup_idle_task(&mut self, entry: extern "C" fn()) -> Result<(), SvsmError> {

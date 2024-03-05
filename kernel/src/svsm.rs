@@ -22,6 +22,7 @@ use svsm::console::{init_console, install_console_logger, WRITER};
 use svsm::cpu::control_regs::{cr0_init, cr4_init};
 use svsm::cpu::cpuid::{dump_cpuid_table, register_cpuid_table};
 use svsm::cpu::efer::efer_init;
+use svsm::cpu::features::{is_sev, is_tdx};
 use svsm::cpu::gdt;
 use svsm::cpu::ghcb::current_ghcb;
 use svsm::cpu::idt::svsm::{early_idt_init, idt_init};
@@ -46,7 +47,7 @@ use svsm::requests::{request_loop, request_processing_main, update_mappings};
 use svsm::serial::SerialPort;
 use svsm::sev::utils::{rmp_adjust, RMPFlags};
 use svsm::sev::{init_hypervisor_ghcb_features, secrets_page, secrets_page_mut, sev_status_init};
-use svsm::svsm_console::SVSMIOPort;
+use svsm::svsm_console::{SVSMIOPort, SVSMTdIOPort};
 use svsm::svsm_paging::{init_page_table, invalidate_early_boot_memory};
 use svsm::task::{create_kernel_task, schedule_init, TASK_FLAG_SHARE_PT};
 use svsm::types::{PageSize, GUEST_VMPL, PAGE_SIZE};
@@ -241,6 +242,7 @@ pub fn memory_init(launch_info: &KernelLaunchInfo) {
 }
 
 static CONSOLE_IO: SVSMIOPort = SVSMIOPort::new();
+static CONSOLE_TDIO: SVSMTdIOPort = SVSMTdIOPort::new();
 static CONSOLE_SERIAL: ImmutAfterInitCell<SerialPort<'_>> = ImmutAfterInitCell::uninit();
 
 pub fn boot_stack_info() {
@@ -279,29 +281,33 @@ pub extern "C" fn svsm_start(li: &KernelLaunchInfo, vb_addr: usize) {
         .init(li)
         .expect("Already initialized launch info");
 
-    let cpuid_table_virt = VirtAddr::from(launch_info.cpuid_page);
-    if !cpuid_table_virt.is_aligned(align_of::<SnpCpuidTable>()) {
-        panic!("Misaligned SNP CPUID table address");
-    }
-    // SAFETY: this is the main function for the SVSM and no other CPUs have
-    // been brought up, so the pointer cannot be aliased. We have verified that
-    // the pointer is aligned so we can create a temporary reference.
-    unsafe {
-        CPUID_PAGE
-            .init(&*(cpuid_table_virt.as_ptr::<SnpCpuidTable>()))
-            .expect("Already initialized CPUID page")
-    };
-    register_cpuid_table(&CPUID_PAGE);
-    dump_cpuid_table();
+    if is_sev() {
+        let cpuid_table_virt = VirtAddr::from(launch_info.cpuid_page);
+        if !cpuid_table_virt.is_aligned(align_of::<SnpCpuidTable>()) {
+            panic!("Misaligned SNP CPUID table address");
+        }
+        // SAFETY: this is the main function for the SVSM and no other CPUs have
+        // been brought up, so the pointer cannot be aliased. We have verified that
+        // the pointer is aligned so we can create a temporary reference.
+        unsafe {
+            CPUID_PAGE
+                .init(&*(cpuid_table_virt.as_ptr::<SnpCpuidTable>()))
+                .expect("Already initialized CPUID page")
+        };
+        register_cpuid_table(&CPUID_PAGE);
+        dump_cpuid_table();
 
-    let secrets_page_virt = VirtAddr::from(launch_info.secrets_page);
-    secrets_page_mut().copy_from(secrets_page_virt);
-    zero_mem_region(secrets_page_virt, secrets_page_virt + PAGE_SIZE);
+        let secrets_page_virt = VirtAddr::from(launch_info.secrets_page);
+        secrets_page_mut().copy_from(secrets_page_virt);
+        zero_mem_region(secrets_page_virt, secrets_page_virt + PAGE_SIZE);
+    }
 
     cr0_init();
     cr4_init();
     efer_init();
-    sev_status_init();
+    if is_sev() {
+        sev_status_init();
+    }
 
     memory_init(&launch_info);
     migrate_valid_bitmap().expect("Failed to migrate valid-bitmap");
@@ -348,12 +354,21 @@ pub extern "C" fn svsm_start(li: &KernelLaunchInfo, vb_addr: usize) {
 
     idt_init();
 
-    CONSOLE_SERIAL
-        .init(&SerialPort {
-            driver: &CONSOLE_IO,
-            port: debug_serial_port,
-        })
-        .expect("console serial output already configured");
+    if is_tdx() {
+        CONSOLE_SERIAL
+            .init(&SerialPort {
+                driver: &CONSOLE_TDIO,
+                port: debug_serial_port,
+            })
+            .expect("console serial output already configured");
+    } else {
+        CONSOLE_SERIAL
+            .init(&SerialPort {
+                driver: &CONSOLE_IO,
+                port: debug_serial_port,
+            })
+            .expect("console serial output already configured");
+    }
 
     WRITER.lock().set(&*CONSOLE_SERIAL);
     init_console();
@@ -384,13 +399,17 @@ pub extern "C" fn svsm_main() {
     // a remote GDB connection
     //debug_break();
 
-    init_hypervisor_ghcb_features().expect("Failed to obtain hypervisor GHCB features");
+    if is_sev() {
+        init_hypervisor_ghcb_features().expect("Failed to obtain hypervisor GHCB features");
+    }
 
     let launch_info = &*LAUNCH_INFO;
     let config = if launch_info.igvm_params_virt_addr != 0 {
         let igvm_params = IgvmParams::new(VirtAddr::from(launch_info.igvm_params_virt_addr))
             .expect("Invalid IGVM parameters");
         SvsmConfig::IgvmConfig(igvm_params)
+    } else if is_tdx() {
+        SvsmConfig::FirmwareConfig(FwCfg::new(&CONSOLE_TDIO))
     } else {
         SvsmConfig::FirmwareConfig(FwCfg::new(&CONSOLE_IO))
     };
@@ -422,23 +441,27 @@ pub extern "C" fn svsm_main() {
     if let Some(ref fw_meta) = fw_metadata {
         print_fw_meta(fw_meta);
 
-        if let Err(e) = validate_fw_memory(&config, fw_meta, &LAUNCH_INFO) {
-            panic!("Failed to validate firmware memory: {:#?}", e);
-        }
+        if is_sev() {
+            if let Err(e) = validate_fw_memory(&config, fw_meta, &LAUNCH_INFO) {
+                panic!("Failed to validate firmware memory: {:#?}", e);
+            }
 
-        if let Err(e) = copy_tables_to_fw(fw_meta) {
-            panic!("Failed to copy firmware tables: {:#?}", e);
-        }
+            if let Err(e) = copy_tables_to_fw(fw_meta) {
+                panic!("Failed to copy firmware tables: {:#?}", e);
+            }
 
-        if let Err(e) = validate_fw(&config, &LAUNCH_INFO) {
-            panic!("Failed to validate flash memory: {:#?}", e);
+            if let Err(e) = validate_fw(&config, &LAUNCH_INFO) {
+                panic!("Failed to validate flash memory: {:#?}", e);
+            }
         }
     }
 
     guest_request_driver_init();
 
     if let Some(ref fw_meta) = fw_metadata {
-        prepare_fw_launch(fw_meta).expect("Failed to setup guest VMSA/CAA");
+        if is_sev() {
+            prepare_fw_launch(fw_meta).expect("Failed to setup guest VMSA/CAA");
+        }
     }
 
     virt_log_usage();

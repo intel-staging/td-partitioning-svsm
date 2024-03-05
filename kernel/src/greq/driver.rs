@@ -10,6 +10,7 @@
 
 extern crate alloc;
 
+use crate::cpu::features::is_sev;
 use alloc::boxed::Box;
 use core::ptr::addr_of_mut;
 use core::{cell::OnceCell, mem::size_of};
@@ -364,9 +365,11 @@ impl SnpGuestRequestDriver {
 /// This function panics if we fail to initialize any of the `SnpGuestRequestDriver` fields.
 pub fn guest_request_driver_init() {
     let cell = GREQ_DRIVER.lock();
-    let _ = cell.get_or_init(|| {
-        SnpGuestRequestDriver::new().expect("SnpGuestRequestDriver failed to initialize")
-    });
+    if is_sev() {
+        let _ = cell.get_or_init(|| {
+            SnpGuestRequestDriver::new().expect("SnpGuestRequestDriver failed to initialize")
+        });
+    }
 }
 
 /// Send the provided regular `SNP_GUEST_REQUEST` command to the PSP.

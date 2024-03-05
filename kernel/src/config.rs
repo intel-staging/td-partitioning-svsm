@@ -10,12 +10,12 @@ use core::slice;
 
 use crate::acpi::tables::{load_acpi_cpu_info, ACPICPUInfo};
 use crate::address::PhysAddr;
-use crate::cpu::features::is_sev;
+use crate::cpu::features::{is_sev, is_tdx};
 use crate::error::SvsmError;
 use crate::fw_cfg::FwCfg;
 use crate::fw_meta::{parse_fw_meta_data, SevFWMetaData};
 use crate::igvm_params::IgvmParams;
-use crate::mm::{PerCPUPageMappingGuard, PAGE_SIZE, SIZE_1G};
+use crate::mm::{PerCPUPageMappingGuard, PAGE_SIZE, SIZE_1G, SIZE_1M};
 use crate::serial::SERIAL_PORT;
 use crate::utils::MemoryRegion;
 use alloc::vec::Vec;
@@ -123,9 +123,14 @@ impl SvsmConfig<'_> {
         match self {
             SvsmConfig::FirmwareConfig(_) => {
                 // Map the metadata location which is defined by the firmware config
-                let guard =
+                let guard = if is_tdx() {
+                    PerCPUPageMappingGuard::create_4k(PhysAddr::from(
+                        (4 * SIZE_1G) - (2 * SIZE_1M) - PAGE_SIZE,
+                    ))
+                } else {
                     PerCPUPageMappingGuard::create_4k(PhysAddr::from(4 * SIZE_1G - PAGE_SIZE))
-                        .expect("Failed to map FW metadata page");
+                }
+                .expect("Failed to map FW metadata page");
                 let vstart = guard.virt_addr().as_ptr::<u8>();
                 // Safety: we just mapped a page, so the size must hold. The type
                 // of the slice elements is `u8` so there are no alignment requirements.
