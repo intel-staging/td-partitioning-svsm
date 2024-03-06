@@ -153,7 +153,7 @@ fn map_and_validate(config: &SvsmConfig<'_>, vregion: MemoryRegion<VirtAddr>, pa
 
     let mut pgtbl = get_init_pgtable_locked();
     pgtbl
-        .map_region(vregion, paddr, flags)
+        .map_region(vregion, paddr, flags, true)
         .expect("Error mapping kernel region");
 
     if config.page_state_change_required() {

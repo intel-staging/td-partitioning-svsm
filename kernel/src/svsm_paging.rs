@@ -67,7 +67,7 @@ pub fn init_page_table(
 
         let vregion = MemoryRegion::new(vaddr_start, segment_len);
         pgtable
-            .map_region(vregion, phys, flags)
+            .map_region(vregion, phys, flags, true)
             .expect("Failed to map kernel ELF segment");
 
         phys = phys + segment_len;
@@ -81,6 +81,7 @@ pub fn init_page_table(
                 vregion,
                 PhysAddr::from(launch_info.igvm_params_phys_addr),
                 PTEntryFlags::data(),
+                true,
             )
             .expect("Failed to map IGVM parameters");
     }
@@ -95,6 +96,7 @@ pub fn init_page_table(
             heap_vregion,
             PhysAddr::from(launch_info.heap_area_phys_start),
             PTEntryFlags::data(),
+            false,
         )
         .expect("Failed to map heap");
 

@@ -429,6 +429,9 @@ impl PageTable {
 
     #[allow(unreachable_code, unused_variables)]
     fn do_split_4k(entry: &mut PTEntry) -> Result<(), SvsmError> {
+        // FIXME
+        // do_split_4k isn't MP-safe and doesn't preserve
+        // the shared bit, so don't do it
         panic!("do_split_4k not supported");
 
         let page = PageTable::allocate_page_table()?;
@@ -641,13 +644,23 @@ impl PageTable {
         region: MemoryRegion<VirtAddr>,
         phys: PhysAddr,
         flags: PTEntryFlags,
+        huge_allowed: bool,
     ) -> Result<(), SvsmError> {
         let mut vaddr = region.start();
         let end = region.end();
         let mut paddr = phys;
 
+        log::info!(
+            "map_region: virt 0x{:x} - 0x{:x} phys 0x{:x}{}",
+            region.start(),
+            region.end(),
+            phys,
+            if huge_allowed { "" } else { " (4K only)" }
+        );
+
         while vaddr < end {
-            if vaddr.is_aligned(PAGE_SIZE_2M)
+            if huge_allowed
+                && vaddr.is_aligned(PAGE_SIZE_2M)
                 && paddr.is_aligned(PAGE_SIZE_2M)
                 && vaddr + PAGE_SIZE_2M <= end
                 && self.map_2m(vaddr, paddr, flags).is_ok()
