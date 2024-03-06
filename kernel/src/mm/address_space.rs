@@ -105,7 +105,7 @@ pub const SVSM_SHARED_STACK_END: VirtAddr = SVSM_SHARED_STACK_BASE.const_add(SIZ
 /// PerCPU mappings level 3 index
 pub const PGTABLE_LVL3_IDX_PERCPU: usize = 510;
 
-/// Base Address of shared memory region
+/// Base Address of per-cpu memory region
 pub const SVSM_PERCPU_BASE: VirtAddr = virt_from_idx(PGTABLE_LVL3_IDX_PERCPU);
 
 /// End Address of per-cpu memory region

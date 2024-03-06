@@ -408,6 +408,12 @@ fn tdpvp_start() {
     unreachable!("Should never return from run_tdp!");
 }
 
+fn sev_request_loop() {
+    create_kernel_task(request_processing_main, TASK_FLAG_SHARE_PT)
+        .expect("Failed to launch request processing task");
+    request_loop();
+}
+
 #[no_mangle]
 pub extern "C" fn svsm_main() {
     // If required, the GDB stub can be started earlier, just after the console
@@ -439,9 +445,6 @@ pub extern "C" fn svsm_main() {
     populate_ram_fs(LAUNCH_INFO.kernel_fs_start, LAUNCH_INFO.kernel_fs_end)
         .expect("Failed to unpack FS archive");
 
-    invalidate_early_boot_memory(&config, launch_info)
-        .expect("Failed to invalidate early boot memory");
-
     let cpus = config.load_cpu_info().expect("Failed to load ACPI tables");
     let mut nr_cpus = 0;
 
@@ -453,7 +456,16 @@ pub extern "C" fn svsm_main() {
 
     log::info!("{} CPU(s) present", nr_cpus);
 
-    start_secondary_cpus(&cpus);
+    if nr_cpus > 1 {
+        if is_sev() {
+            start_secondary_cpus(&cpus, PhysAddr::null(), sev_request_loop);
+        } else if is_tdx() {
+            start_secondary_cpus(&cpus, LAUNCH_INFO.mailbox_page.into(), tdpvp_start);
+        }
+    }
+
+    invalidate_early_boot_memory(&config, launch_info)
+        .expect("Failed to invalidate early boot memory");
 
     let fw_metadata = config.get_fw_metadata();
     if let Some(ref fw_meta) = fw_metadata {
