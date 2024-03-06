@@ -51,6 +51,7 @@ extern "C" {
     pub static heap_end: u8;
     pub static mut pgtable: PageTable;
     pub static CPUID_PAGE: SnpCpuidTable;
+    pub static MAILBOX_PAGE: [u8; PAGE_SIZE];
 }
 
 fn setup_stage2_allocator() {
@@ -358,6 +359,7 @@ pub extern "C" fn stage2_main(launch_info: &Stage1LaunchInfo) {
         kernel_fs_end: u64::from(launch_info.kernel_fs_end),
         cpuid_page: config.get_cpuid_page_address(),
         secrets_page: config.get_secrets_page_address(),
+        mailbox_page: unsafe { VirtAddr::from(addr_of!(MAILBOX_PAGE)).into() },
         stage2_igvm_params_phys_addr: u64::from(launch_info.igvm_params),
         stage2_igvm_params_size: igvm_params_size as u64,
         igvm_params_phys_addr: u64::from(igvm_params_phys_address),
