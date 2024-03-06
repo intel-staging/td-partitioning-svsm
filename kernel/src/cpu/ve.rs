@@ -4,8 +4,11 @@
 //
 // Author: Chuanxiao Dong <chuanxiao.dong@intel.com>
 
+use super::extable::handle_exception_table;
 use super::idt::common::X86ExceptionContext;
-use crate::tdx::{tdcall_get_ve_info, tdvmcall_cpuid, tdvmcall_rdmsr, tdvmcall_wrmsr};
+use crate::tdx::{
+    tdcall_get_ve_info, tdvmcall_cpuid, tdvmcall_rdmsr, tdvmcall_wrmsr, TdVmcallError,
+};
 
 const VMX_EXIT_REASON_CPUID: u32 = 10;
 const VMX_EXIT_REASON_RDMSR: u32 = 31;
@@ -28,6 +31,13 @@ pub fn handle_virtualization_exception(ctx: &mut X86ExceptionContext) {
         VMX_EXIT_REASON_RDMSR => {
             let msr_val = match tdvmcall_rdmsr(ctx.regs.rcx as u32) {
                 Ok(v) => v,
+                Err(TdVmcallError::VmcallOperandInvalid) => {
+                    let rip = ctx.frame.rip;
+                    if !handle_exception_table(ctx) {
+                        panic!("Unhandled RDMSR #VE exception at RIP {:#018x}", rip);
+                    }
+                    return;
+                }
                 Err(e) => panic!("Unhandled tdvmcall_rdmsr error: {:?}", e),
             };
 
@@ -38,7 +48,15 @@ pub fn handle_virtualization_exception(ctx: &mut X86ExceptionContext) {
             let msr_val = u64::from(ctx.regs.rax as u32) | ((ctx.regs.rdx as u64) << 32);
 
             if let Err(e) = tdvmcall_wrmsr(ctx.regs.rcx as u32, msr_val) {
-                panic!("Unhandled tdvmcall_wrmsr error: {:?}", e);
+                match e {
+                    TdVmcallError::VmcallOperandInvalid => {
+                        let rip = ctx.frame.rip;
+                        if !handle_exception_table(ctx) {
+                            panic!("Unhandled WRMSR #VE exception at RIP {:#018x}", rip);
+                        }
+                    }
+                    e => panic!("Unhandled tdvmcall_wrmsr error: {:?}", e),
+                }
             }
         }
         _ => {

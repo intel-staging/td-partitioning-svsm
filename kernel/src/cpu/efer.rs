@@ -25,12 +25,12 @@ bitflags! {
 }
 
 pub fn read_efer() -> EFERFlags {
-    EFERFlags::from_bits_truncate(read_msr(EFER))
+    EFERFlags::from_bits_truncate(read_msr(EFER).unwrap())
 }
 
 pub fn write_efer(efer: EFERFlags) {
     let val = efer.bits();
-    write_msr(EFER, val);
+    write_msr(EFER, val).unwrap();
 }
 
 pub fn efer_init() {

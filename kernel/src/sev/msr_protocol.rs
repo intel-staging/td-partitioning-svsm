@@ -71,9 +71,9 @@ static GHCB_HV_FEATURES: ImmutAfterInitCell<GHCBHvFeatures> = ImmutAfterInitCell
 /// Check that we support the hypervisor's advertised GHCB versions.
 pub fn verify_ghcb_version() {
     // Request SEV information.
-    write_msr(SEV_GHCB, GHCBMsr::SEV_INFO_REQ);
+    write_msr(SEV_GHCB, GHCBMsr::SEV_INFO_REQ).unwrap();
     raw_vmgexit();
-    let sev_info = read_msr(SEV_GHCB);
+    let sev_info = read_msr(SEV_GHCB).unwrap();
 
     // Parse the results.
 
@@ -99,9 +99,9 @@ pub fn hypervisor_ghcb_features() -> GHCBHvFeatures {
 }
 
 pub fn init_hypervisor_ghcb_features() -> Result<(), GhcbMsrError> {
-    write_msr(SEV_GHCB, GHCBMsr::SNP_HV_FEATURES_REQ);
+    write_msr(SEV_GHCB, GHCBMsr::SNP_HV_FEATURES_REQ).unwrap();
     raw_vmgexit();
-    let result = read_msr(SEV_GHCB);
+    let result = read_msr(SEV_GHCB).unwrap();
     if (result & 0xFFF) == GHCBMsr::SNP_HV_FEATURES_RESP {
         let features = GHCBHvFeatures::from_bits_truncate(result >> 12);
 
@@ -133,9 +133,9 @@ pub fn register_ghcb_gpa_msr(addr: PhysAddr) -> Result<(), GhcbMsrError> {
     let mut info = addr.bits() as u64;
 
     info |= GHCBMsr::SNP_REG_GHCB_GPA_REQ;
-    write_msr(SEV_GHCB, info);
+    write_msr(SEV_GHCB, info).unwrap();
     raw_vmgexit();
-    info = read_msr(SEV_GHCB);
+    info = read_msr(SEV_GHCB).unwrap();
 
     if (info & 0xfff) != GHCBMsr::SNP_REG_GHCB_GPA_RESP {
         return Err(GhcbMsrError::InfoMismatch);
@@ -158,9 +158,9 @@ fn set_page_valid_status_msr(addr: PhysAddr, valid: bool) -> Result<(), GhcbMsrE
     }
 
     info |= GHCBMsr::SNP_STATE_CHANGE_REQ;
-    write_msr(SEV_GHCB, info);
+    write_msr(SEV_GHCB, info).unwrap();
     raw_vmgexit();
-    let response = read_msr(SEV_GHCB);
+    let response = read_msr(SEV_GHCB).unwrap();
 
     if (response & 0xfff) != GHCBMsr::SNP_STATE_CHANGE_RESP {
         return Err(GhcbMsrError::InfoMismatch);
@@ -184,7 +184,7 @@ pub fn invalidate_page_msr(addr: PhysAddr) -> Result<(), GhcbMsrError> {
 pub fn request_termination_msr() -> ! {
     let info: u64 = GHCBMsr::TERM_REQ;
 
-    write_msr(SEV_GHCB, info);
+    write_msr(SEV_GHCB, info).unwrap();
     raw_vmgexit();
     loop {
         halt();

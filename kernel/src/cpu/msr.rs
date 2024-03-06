@@ -4,6 +4,7 @@
 //
 // Author: Joerg Roedel <jroedel@suse.de>
 
+use crate::error::SvsmError;
 use core::arch::asm;
 
 pub const EFER: u32 = 0xC000_0080;
@@ -11,30 +12,60 @@ pub const SEV_STATUS: u32 = 0xC001_0131;
 pub const SEV_GHCB: u32 = 0xC001_0130;
 pub const MSR_GS_BASE: u32 = 0xC000_0101;
 
-pub fn read_msr(msr: u32) -> u64 {
+pub fn read_msr(msr: u32) -> Result<u64, SvsmError> {
     let eax: u32;
     let edx: u32;
+    let rcx: u64;
 
     unsafe {
-        asm!("rdmsr",
-             in("ecx") msr,
-             out("eax") eax,
-             out("edx") edx,
-             options(att_syntax));
+        asm!("1: rdmsr",
+             "   xorq %rcx, %rcx",
+             "2:",
+             ".pushsection \"__exception_table\",\"a\"",
+             ".balign 16",
+             ".quad (1b)",
+             ".quad (2b)",
+             ".popsection",
+                in("ecx") msr,
+                out("eax") eax,
+                out("edx") edx,
+                lateout("rcx") rcx,
+                options(att_syntax, nostack));
     }
-    (eax as u64) | (edx as u64) << 32
+
+    if rcx == 0 {
+        let ret = (eax as u64) | (edx as u64) << 32;
+        Ok(ret)
+    } else {
+        Err(SvsmError::Msr)
+    }
 }
 
-pub fn write_msr(msr: u32, val: u64) {
-    let eax = (val & 0x0000_0000_ffff_ffff) as u32;
+pub fn write_msr(msr: u32, val: u64) -> Result<(), SvsmError> {
+    let eax = val as u32;
     let edx = (val >> 32) as u32;
+    let rcx: u64;
 
     unsafe {
-        asm!("wrmsr",
-             in("ecx") msr,
-             in("eax") eax,
-             in("edx") edx,
-             options(att_syntax));
+        asm!("1: wrmsr",
+             "   xorq %rcx, %rcx",
+             "2:",
+             ".pushsection \"__exception_table\",\"a\"",
+             ".balign 16",
+             ".quad (1b)",
+             ".quad (2b)",
+             ".popsection",
+                in("ecx") msr,
+                in("eax") eax,
+                in("edx") edx,
+                lateout("rcx") rcx,
+                options(att_syntax, nostack));
+    }
+
+    if rcx == 0 {
+        Ok(())
+    } else {
+        Err(SvsmError::Msr)
     }
 }
 

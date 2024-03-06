@@ -131,7 +131,7 @@ impl fmt::Display for SEVStatusFlags {
 static SEV_FLAGS: ImmutAfterInitCell<SEVStatusFlags> = ImmutAfterInitCell::uninit();
 
 fn read_sev_status() -> SEVStatusFlags {
-    SEVStatusFlags::from_bits_truncate(read_msr(SEV_STATUS))
+    SEVStatusFlags::from_bits_truncate(read_msr(SEV_STATUS).unwrap())
 }
 
 pub fn sev_flags() -> SEVStatusFlags {
