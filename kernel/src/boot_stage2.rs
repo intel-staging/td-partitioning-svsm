@@ -108,6 +108,15 @@ global_asm!(
         lret
 
     get_pte_c_bit:
+        movl $0x80000000, %eax
+        cpuid
+        /* Should fail for non-SEV CPUs */
+        cmpl $0x8000001f, %eax
+        je .Lis_sev
+        xorl %eax, %eax
+        ret
+
+    .Lis_sev:
         /*
          * Check that the SNP_Active bit in the SEV_STATUS MSR is set.
          */
