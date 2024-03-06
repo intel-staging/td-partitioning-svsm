@@ -8,7 +8,7 @@ extern crate alloc;
 
 use crate::address::{Address, PhysAddr};
 use crate::config::SvsmConfig;
-use crate::cpu::features::is_sev;
+use crate::cpu::features::{is_sev, is_tdx};
 use crate::cpu::percpu::PERCPU_VMSAS;
 use crate::error::SvsmError;
 use crate::locking::RWLock;
@@ -90,6 +90,8 @@ pub fn init_memory_map(
     let mut map = MEMORY_MAP.lock_write();
     *map = regions;
 
+    init_rom_map(config)?;
+
     Ok(())
 }
 
@@ -128,6 +130,23 @@ pub fn writable_phys_addr(paddr: PhysAddr) -> bool {
     }
 
     valid_phys_address(paddr)
+}
+
+static ROM_MAP: RWLock<Vec<MemoryRegion<PhysAddr>>> = RWLock::new(Vec::new());
+
+fn init_rom_map(config: &SvsmConfig<'_>) -> Result<(), SvsmError> {
+    let mut map = ROM_MAP.lock_write();
+
+    if is_tdx() {
+        let mut r = config.find_guest_rom_regions()?;
+        map.append(&mut r);
+    }
+
+    log::info!("Guest ROM Regions:");
+    for r in map.iter() {
+        log::info!("  {:018x}-{:018x}", r.start(), r.end());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

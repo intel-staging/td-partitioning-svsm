@@ -212,6 +212,21 @@ impl<'a> FwCfg<'a> {
         Ok(kernel_region)
     }
 
+    pub fn find_guest_rom_regions(&self) -> Result<Vec<MemoryRegion<PhysAddr>>, SvsmError> {
+        let mut regions = Vec::new();
+
+        if let Ok(file) = self.file_selector("etc/tdx/l2bios") {
+            if file.size != 16 {
+                return Err(SvsmError::FwCfg(FwCfgError::FileSize(file.size)));
+            }
+
+            self.select(file.selector);
+            regions.push(self.read_memory_region());
+        }
+
+        Ok(regions)
+    }
+
     // This needs to be &mut self to prevent iterator invalidation, where the caller
     // could do fw_cfg.select() while iterating. Having a mutable reference prevents
     // other references.

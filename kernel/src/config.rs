@@ -72,6 +72,12 @@ impl SvsmConfig<'_> {
             SvsmConfig::IgvmConfig(igvm_params) => igvm_params.find_kernel_region(),
         }
     }
+    pub fn find_guest_rom_regions(&self) -> Result<Vec<MemoryRegion<PhysAddr>>, SvsmError> {
+        match self {
+            SvsmConfig::FirmwareConfig(fw_cfg) => fw_cfg.find_guest_rom_regions(),
+            SvsmConfig::IgvmConfig(_) => Err(SvsmError::Firmware),
+        }
+    }
     pub fn get_cpuid_page_address(&self) -> u64 {
         match self {
             SvsmConfig::FirmwareConfig(_) => 0x9f000,
