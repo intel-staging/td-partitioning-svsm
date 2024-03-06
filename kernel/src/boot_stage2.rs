@@ -6,6 +6,10 @@
 
 use core::arch::global_asm;
 
+/*
+ * %esp: Stage1LaunchInfo pointer
+ * %esi: CPU index
+ */
 global_asm!(
     r#"
         .text
@@ -16,8 +20,8 @@ global_asm!(
         .globl startup_32
         startup_32:
 
-        /* Save pointer to startup structure in ESI */
-        movl %esp, %esi
+        /* Save pointer to startup structure in EBP */
+        movl %esp, %ebp
         /*
          * Load a GDT. Despite the naming, it contains valid
          * entries for both, "legacy" 32bit and long mode each.
@@ -206,7 +210,8 @@ global_asm!(
         shrq $3, %rcx
         rep stosq
 
-        movq %rsi, %rdi
+        xorq %rdi, %rdi
+        movl %ebp, %edi
         jmp stage2_main
 
         .data
