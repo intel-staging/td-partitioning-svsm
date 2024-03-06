@@ -5,6 +5,7 @@
 // Author: Joerg Roedel <jroedel@suse.de>
 
 use crate::utils::immut_after_init::ImmutAfterInitRef;
+use core::arch::x86_64::__cpuid;
 use cpuarch::snp_cpuid::SnpCpuidTable;
 use log;
 
@@ -48,7 +49,21 @@ pub struct CpuidResult {
     pub edx: u32,
 }
 
+pub fn cpuid(eax: u32) -> Option<CpuidResult> {
+    unsafe {
+        let result = __cpuid(eax);
+        Some(CpuidResult {
+            eax: result.eax,
+            ebx: result.ebx,
+            ecx: result.ecx,
+            edx: result.edx,
+        })
+    }
+}
+
+#[allow(unreachable_code, unused)]
 pub fn cpuid_table_raw(eax: u32, ecx: u32, xcr0: u64, xss: u64) -> Option<CpuidResult> {
+    panic!("cpuid_table_raw not supported");
     let count: usize = CPUID_PAGE.count as usize;
 
     for i in 0..count {
@@ -73,7 +88,9 @@ pub fn cpuid_table(eax: u32) -> Option<CpuidResult> {
     cpuid_table_raw(eax, 0, 0, 0)
 }
 
+#[allow(unreachable_code, unused)]
 pub fn dump_cpuid_table() {
+    panic!("dump_cpuid_table not supported");
     let count = CPUID_PAGE.count as usize;
 
     log::trace!("CPUID Table entry count: {}", count);
