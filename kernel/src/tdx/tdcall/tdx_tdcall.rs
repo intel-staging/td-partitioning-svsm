@@ -281,23 +281,34 @@ pub fn tdvmcall_mmio_read<T: Clone + Copy + Sized>(address: usize) -> T {
 /// Details can be found in TDX GHCI spec section 'TDG.VP.VMCALL<MapGPA>'
 pub fn tdvmcall_mapgpa(shared: bool, paddr: u64, length: usize) -> Result<(), TdVmcallError> {
     let share_bit = *SHARED_MASK;
-    let paddr = if shared {
+    let mut paddr_start = if shared {
         paddr | share_bit
     } else {
         paddr & (!share_bit)
     };
+    let mut remain_len = length as u64;
 
-    let mut args = TdVmcallArgs {
-        r11: TDVMCALL_MAPGPA,
-        r12: paddr,
-        r13: length as u64,
-        ..Default::default()
-    };
+    loop {
+        let mut args = TdVmcallArgs {
+            r11: TDVMCALL_MAPGPA,
+            r12: paddr_start,
+            r13: remain_len,
+            ..Default::default()
+        };
 
-    let ret = td_vmcall(&mut args);
+        let ret = td_vmcall(&mut args);
 
-    if ret != TDVMCALL_STATUS_SUCCESS {
-        return Err(ret.into());
+        if ret == TDVMCALL_STATUS_SUCCESS {
+            break;
+        }
+
+        match ret.into() {
+            TdVmcallError::VmcallRetry => {
+                remain_len -= args.r11 - paddr_start;
+                paddr_start = args.r11;
+            }
+            _ => return Err(ret.into()),
+        }
     }
 
     log::trace!(
