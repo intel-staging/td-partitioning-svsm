@@ -35,7 +35,7 @@ pub struct Tdp {
     vioapic: Vioapic,
 }
 
-type Tdps = [OnceCell<Tdp>; MAX_NUM_L2_VMS];
+type Tdps = [OnceCell<Arc<Tdp>>; MAX_NUM_L2_VMS];
 static TDPS: ImmutAfterInitCell<Tdps> = ImmutAfterInitCell::uninit();
 static NUM_L2_VMS: ImmutAfterInitCell<u64> = ImmutAfterInitCell::new(0);
 
@@ -108,7 +108,7 @@ impl Tdp {
 
 pub fn init_tdps(apic_id: u32) -> Result<(), TdxError> {
     let tdps = {
-        let mut tdps: [MaybeUninit<OnceCell<Tdp>>; MAX_NUM_L2_VMS] =
+        let mut tdps: [MaybeUninit<OnceCell<Arc<Tdp>>>; MAX_NUM_L2_VMS] =
             unsafe { MaybeUninit::uninit().assume_init() };
         for tdp in tdps.iter_mut() {
             *tdp = MaybeUninit::new(OnceCell::new());
@@ -124,7 +124,8 @@ pub fn init_tdps(apic_id: u32) -> Result<(), TdxError> {
             let vm_id = TdpVmId::new(FIRST_VM_ID + i as u64)?;
             let mut data = Tdp::new(vm_id, apic_id);
             data.init()?;
-            tdp.set(data).map_err(|_| TdxError::TdpNotSupport)?;
+            tdp.set(Arc::new(data))
+                .map_err(|_| TdxError::TdpNotSupport)?;
         }
     }
 
@@ -142,9 +143,9 @@ pub fn init_tdps(apic_id: u32) -> Result<(), TdxError> {
     Ok(())
 }
 
-pub fn this_tdp(vm_id: TdpVmId) -> &'static Tdp {
+pub fn this_tdp(vm_id: TdpVmId) -> Arc<Tdp> {
     assert!((0..*NUM_L2_VMS as usize).contains(&vm_id.index()));
-    TDPS[vm_id.index()].get().unwrap()
+    TDPS[vm_id.index()].get().unwrap().clone()
 }
 
 pub fn get_vcpu_cb(vm_id: TdpVmId, apic_id: u32) -> Option<Arc<VcpuCommBlock>> {
@@ -153,7 +154,7 @@ pub fn get_vcpu_cb(vm_id: TdpVmId, apic_id: u32) -> Option<Arc<VcpuCommBlock>> {
         .and_then(|cbs| cbs.get(&apic_id).cloned())
 }
 
-pub fn get_tdp_by_notify_vec(vec: u8) -> Option<&'static Tdp> {
+pub fn get_tdp_by_notify_vec(vec: u8) -> Option<Arc<Tdp>> {
     for tdp in TDPS.iter() {
         let tdp = tdp.get().and_then(|tdp| {
             if tdp.sirte_vec == Some(vec) {
@@ -163,7 +164,7 @@ pub fn get_tdp_by_notify_vec(vec: u8) -> Option<&'static Tdp> {
             }
         });
         if tdp.is_some() {
-            return tdp;
+            return tdp.cloned();
         }
     }
     None
