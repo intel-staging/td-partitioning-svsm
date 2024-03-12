@@ -1159,8 +1159,28 @@ impl Vlapic {
             }
         } else {
             match x2apic_msr_to_regoff(offset_arg) {
+                APIC_OFFSET_ID => self.get_reg(APIC_OFFSET_ID),
+                APIC_OFFSET_VER => self.get_reg(APIC_OFFSET_VER),
+                APIC_OFFSET_LDR => self.get_reg(APIC_OFFSET_LDR),
+                APIC_OFFSET_SVR => self.get_reg(APIC_OFFSET_SVR),
+                APIC_OFFSET_ESR => self.get_reg(APIC_OFFSET_ESR),
+                APIC_OFFSET_ICR_LOW => self.get_reg(APIC_OFFSET_ICR_LOW),
                 APIC_OFFSET_CMCI_LVT => self.get_reg(APIC_OFFSET_CMCI_LVT),
+                APIC_OFFSET_TIMER_LVT => self.get_reg(APIC_OFFSET_TIMER_LVT),
+                APIC_OFFSET_THERM_LVT => self.get_reg(APIC_OFFSET_THERM_LVT),
+                APIC_OFFSET_PERF_LVT => self.get_reg(APIC_OFFSET_PERF_LVT),
+                APIC_OFFSET_LINT0_LVT => self.get_reg(APIC_OFFSET_LINT0_LVT),
+                APIC_OFFSET_LINT1_LVT => self.get_reg(APIC_OFFSET_LINT1_LVT),
+                APIC_OFFSET_ERROR_LVT => self.get_reg(APIC_OFFSET_ERROR_LVT),
+                APIC_OFFSET_TIMER_ICR => {
+                    if self.lvtt_is_tsc_deadline() {
+                        0
+                    } else {
+                        self.get_reg(APIC_OFFSET_TIMER_ICR)
+                    }
+                }
                 APIC_OFFSET_TIMER_CCR => self.get_ccr(),
+                APIC_OFFSET_TIMER_DCR => self.get_reg(APIC_OFFSET_TIMER_DCR),
                 _ => return Err(TdxError::Vlapic),
             }
         };
