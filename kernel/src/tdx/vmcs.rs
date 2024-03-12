@@ -120,10 +120,9 @@ impl Vmcs {
 
         // Disable pause-loop vmexit
         // Disable user wait/pause
-        // Disable APICV features as vlapic starts from xapic mode
+        // Disable APICV VID feature as vlapic starts from xapic mode
         let clear = (SecondaryVmExecControls::PAUSE_LOOP_EXITING
             | SecondaryVmExecControls::USR_WAIT_PAUSE
-            | SecondaryVmExecControls::APIC_REGISTER_VIRT
             | SecondaryVmExecControls::VIRT_INTR_DELIVERY)
             .bits();
 
