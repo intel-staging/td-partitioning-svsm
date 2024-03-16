@@ -13,7 +13,6 @@ use crate::address::VirtAddr;
 use crate::cpu::idt::common::X86ExceptionContext;
 use crate::cpu::lapic::LAPIC;
 use crate::mm::{virt_to_phys, PAGE_SIZE};
-use crate::utils::zero_mem_region;
 use bitfield_struct::bitfield;
 use core::sync::atomic::{fence, Ordering};
 
@@ -52,6 +51,7 @@ struct IrqChipEvent {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 union IrqEvent {
     msi: MsiEvent,
     irqchip: IrqChipEvent,
@@ -60,27 +60,35 @@ union IrqEvent {
 const IRQ_TYPE_IOAPIC: u32 = 1;
 const IRQ_TYPE_MSI: u32 = 2;
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct SirtEntry {
     irq_type: u32,
     event: IrqEvent,
 }
 
-// The Sirte header is the meta data in the front of the SirtePage.
-// It is constructed by vec + rsv and struct SharedBuf.
-const SIRTE_HEADER_SIZE: usize = 48;
+impl Default for SirtEntry {
+    fn default() -> Self {
+        SirtEntry {
+            irq_type: 0,
+            event: IrqEvent {
+                msi: Default::default(),
+            },
+        }
+    }
+}
 
 #[repr(C)]
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 // Sirte page is 4K. Of the 4K, first 48 bytes are allocated for header
 // which comprises of vec + rsvd(16 bytes) and shared buffer(32 bytes).
 // The header is fixed at 48 bytes so that the remaining 4048 (4096- 48)
 // bytes are exactly a multiple of sirte entry which is of 16 bytes in len.
 // For this reason add padding to shared buffer to make it 32 bytes.
-struct SharedBuf {
+struct MetaData {
     // number of elements
-    ele_num: u32,
+    num_elem: u32,
     // sizeof of elements
-    ele_size: u32,
+    elem_size: u32,
     // offset from base, to read
     head: u32,
     // offset from base, to write
@@ -90,13 +98,12 @@ struct SharedBuf {
     padding: [u32; 3],
 }
 
-impl SharedBuf {
-    fn new(buf_size: usize, ele_size: usize) -> Self {
-        let ele_num = (buf_size - SIRTE_HEADER_SIZE) / ele_size;
+impl MetaData {
+    fn new(num_elem: usize, elem_size: usize) -> Self {
         Self {
-            ele_size: ele_size as u32,
-            ele_num: ele_num as u32,
-            size: (ele_size * ele_num) as u32,
+            elem_size: elem_size as u32,
+            num_elem: num_elem as u32,
+            size: (elem_size * num_elem) as u32,
             ..Default::default()
         }
     }
@@ -106,39 +113,52 @@ impl SharedBuf {
     }
 
     fn update_head(&mut self) {
-        let mut pos = self.head + self.ele_size;
-        if pos >= self.size {
-            pos -= self.size;
+        let mut pos = self.head + 1;
+        if pos >= self.num_elem {
+            pos = 0;
         }
         self.head = pos;
     }
 }
 
-// Sirte page is 4K. Of the 4K, first 48 bytes are allocated for header
-// which comprises of vec + rsvd(16 bytes) and shared buffer(32 bytes).
-// The header is fixed at 48 bytes so that the remaining 4048 (4096- 48)
-// data bytes are exactly a multiple of sirte entry which is of 16 bytes
-// in len.
 #[repr(C)]
-#[repr(align(4096))]
-struct SirtePage {
+#[derive(Clone, Copy, Default)]
+struct SirteHeader {
     vec: u8,
     // padding to make buffer(PAGE_SIZE - Header) a multiple of struct SirtEntry (16 bytes)
     rsv: [u8; 15],
-    sbuf: SharedBuf,
+    mdata: MetaData,
+}
+
+#[repr(C)]
+#[repr(align(4096))]
+struct SirtePage {
+    sirte_hdr: SirteHeader,
+    data: [SirtEntry; 253],
 }
 
 impl SirtePage {
+    fn new(notification_vector: u8) -> Self {
+        let data_size = core::mem::size_of::<SirtePage>() - core::mem::size_of::<SirteHeader>();
+        let elem_size = core::mem::size_of::<SirtEntry>();
+        let num_elem = data_size / elem_size;
+        Self {
+            sirte_hdr: SirteHeader {
+                vec: notification_vector,
+                rsv: [0; 15],
+                mdata: MetaData::new(num_elem, elem_size),
+            },
+            data: [SirtEntry::default(); 253],
+        }
+    }
+
     fn read(&mut self) -> Option<SirtEntry> {
-        if !self.sbuf.is_empty() {
+        if !self.sirte_hdr.mdata.is_empty() {
             // Get the address of the SirtePage
-            let ptr = core::ptr::addr_of!(*self) as *const u8;
-            let src =
-                ptr.wrapping_add(SIRTE_HEADER_SIZE + self.sbuf.head as usize) as *const SirtEntry;
-            let entry = unsafe { src.read() };
+            let entry = self.data[self.sirte_hdr.mdata.head as usize];
             // Ensure data is copied out before updating shared buffer head.
             fence(Ordering::SeqCst);
-            self.sbuf.update_head();
+            self.sirte_hdr.mdata.update_head();
             Some(entry)
         } else {
             None
@@ -154,20 +174,15 @@ pub struct Sirte {
 impl Sirte {
     pub fn init(&mut self, vm_id: TdpVmId) -> Result<(), TdxError> {
         self.vm_id = vm_id;
-        let vec = this_tdp(self.vm_id)
+        let nv = this_tdp(self.vm_id)
             .get_sirte_vec()
             .ok_or(TdxError::Sirte)?;
+
         let vaddr = VirtAddr::from(core::ptr::addr_of!(self.page));
         let paddr = virt_to_phys(vaddr);
-        zero_mem_region(vaddr, vaddr + PAGE_SIZE);
         td_convert_kernel_pages(paddr, paddr + PAGE_SIZE, true)?;
 
-        self.page.vec = vec;
-        self.page.sbuf = SharedBuf::new(
-            core::mem::size_of::<SirtePage>(),
-            core::mem::size_of::<SirtEntry>(),
-        );
-
+        self.page = SirtePage::new(nv);
         td_share_irte_hdr(paddr, vm_id)
     }
 
