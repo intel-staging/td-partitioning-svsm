@@ -1,0 +1,151 @@
+From 3b3ba30664387977f14e166ea41752b484d53acf Mon Sep 17 00:00:00 2001
+From: Vijay Dhanraj <vijay.dhanraj@intel.com>
+Date: Sun, 3 Mar 2024 18:46:09 -0800
+Subject: [PATCH 20/26] KVM: TDX: Setup trigger for Host to start sharing irq
+ event
+
+This commit introduces `tdx_is_irq_event_pt()` an x86_ops
+function to let host know when to start sharing the irq
+event info with SVSM.
+
+Signed-off-by: Vijay Dhanraj <vijay.dhanraj@intel.com>
+---
+ arch/x86/include/asm/kvm-x86-ops.h |  1 +
+ arch/x86/include/asm/kvm_host.h    |  1 +
+ arch/x86/kvm/vmx/main.c            |  2 ++
+ arch/x86/kvm/vmx/tdx.c             | 20 ++++++++++++++++++++
+ arch/x86/kvm/vmx/tdx.h             | 12 ++++++++++++
+ arch/x86/kvm/vmx/x86_ops.h         |  2 ++
+ 6 files changed, 38 insertions(+)
+
+diff --git a/arch/x86/include/asm/kvm-x86-ops.h b/arch/x86/include/asm/kvm-x86-ops.h
+index 6741cc518dae..6dd5bc9ea881 100644
+--- a/arch/x86/include/asm/kvm-x86-ops.h
++++ b/arch/x86/include/asm/kvm-x86-ops.h
+@@ -160,6 +160,7 @@ KVM_X86_OP_OPTIONAL(get_untagged_addr)
+ KVM_X86_OP_OPTIONAL_RET0(gmem_max_level)
+ KVM_X86_OP_OPTIONAL(pre_memory_mapping);
+ KVM_X86_OP_OPTIONAL(post_memory_mapping);
++KVM_X86_OP_OPTIONAL(is_irq_event_pt)
+ 
+ #undef KVM_X86_OP
+ #undef KVM_X86_OP_OPTIONAL
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index a02b14be186c..18479a5d181b 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -1873,6 +1873,7 @@ struct kvm_x86_ops {
+ 				  u64 *error_code, u8 *max_level);
+ 	void (*post_memory_mapping)(struct kvm_vcpu *vcpu,
+ 				    struct kvm_memory_mapping *mapping);
++	bool (*is_irq_event_pt)(struct kvm *kvm);
+ };
+ 
+ struct kvm_x86_nested_ops {
+diff --git a/arch/x86/kvm/vmx/main.c b/arch/x86/kvm/vmx/main.c
+index 1a979ec644d0..8b84bd4aeb3f 100644
+--- a/arch/x86/kvm/vmx/main.c
++++ b/arch/x86/kvm/vmx/main.c
+@@ -1193,6 +1193,8 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
+ 	.gmem_max_level = vt_gmem_max_level,
+ 	.pre_memory_mapping = vt_pre_memory_mapping,
+ 	.post_memory_mapping = vt_post_memory_mapping,
++
++	.is_irq_event_pt = tdx_is_irq_event_pt,
+ };
+ 
+ struct kvm_x86_init_ops vt_init_ops __initdata = {
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index 43793d32d2c2..ca9646156a0e 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -718,6 +718,7 @@ static void td_partitioning_init(struct kvm_tdx *kvm_tdx)
+ 	for (i = 0; i < MAX_NUM_L2_VMS; i++) {
+ 		INIT_LIST_HEAD(&kvm_tdx->l2sept_list[i].head);
+ 		spin_lock_init(&kvm_tdx->l2sept_list[i].lock);
++		kvm_tdx->l2_pt_irq[i].num_l2_vcpus = 0;
+ 	}
+ }
+ 
+@@ -1569,16 +1570,29 @@ static int tdx_get_td_vm_call_info(struct kvm_vcpu *vcpu)
+ 	return 1;
+ }
+ 
++bool tdx_is_irq_event_pt(struct kvm *kvm)
++{
++	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
++
++	/*
++	 * FIXME: Currently SVSM only supports one VM, but layout plumbing
++	 * for multi-L2 VM support.
++	 */
++	return kvm_tdx->l2_pt_irq[0].num_l2_vcpus == kvm->created_vcpus;
++}
++
+ static int tdx_handle_shared_irte_header(struct kvm_vcpu *vcpu)
+ {
+ 	gfn_t gfn;
+ 	gpa_t gpa = tdvmcall_a0_read(vcpu);
++	u64 vm_idx = tdvmcall_a1_read(vcpu);
+ 	struct page *page;
+ 	int npages_pinned;
+ 	unsigned long guest_addr;
+ 	void *shared_page_vaddr;
+ 	struct sirte_header sirte_hdr;
+ 	struct vcpu_tdx *tdx_vcpu = to_tdx(vcpu);
++	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
+ 
+ 	/* shared irte info already initialized, return success */
+ 	if (tdx_vcpu->pinned_page) {
+@@ -1619,6 +1633,12 @@ static int tdx_handle_shared_irte_header(struct kvm_vcpu *vcpu)
+ 	}
+ 	tdx_vcpu->pinned_page = page;
+ 
++	/*
++	 * FIXME: Currently SVSM only supports one VM, but layout plumbing
++	 * for multi-L2 VM support.
++	 */
++	kvm_tdx->l2_pt_irq[vm_idx].num_l2_vcpus++;
++
+ 	shared_page_vaddr = page_address(page);
+ 	if (!shared_page_vaddr) {
+ 		pr_err("%s: invalid shared_irte_hva\n", __func__);
+diff --git a/arch/x86/kvm/vmx/tdx.h b/arch/x86/kvm/vmx/tdx.h
+index 80134d1bb491..d39e096c0fae 100644
+--- a/arch/x86/kvm/vmx/tdx.h
++++ b/arch/x86/kvm/vmx/tdx.h
+@@ -58,6 +58,18 @@ struct kvm_tdx {
+ 		 */
+ 		spinlock_t lock;
+ 	} l2sept_list[MAX_NUM_L2_VMS];
++
++	/*
++	 * FIXME: Currently num L1 vcpus = L2 vcpus as we only have one L2 VM.
++	 * But this may not be true when we have multi-L2 VM. In such case L1
++	 * may need to share num of L2 vcpus per VM. Once this is known, the
++	 * number of L2 vcpus per VM becomes relatively straight forward to
++	 * check and confirm if all the L2 vcpus per VM have completed shared
++	 * buffer setup. After this, host can start sharing irq_events.
++	 */
++	struct {
++		u32 num_l2_vcpus;
++	} l2_pt_irq[MAX_NUM_L2_VMS];
+ };
+ 
+ union tdx_exit_reason {
+diff --git a/arch/x86/kvm/vmx/x86_ops.h b/arch/x86/kvm/vmx/x86_ops.h
+index 6b067842a67f..1c1996c64d7f 100644
+--- a/arch/x86/kvm/vmx/x86_ops.h
++++ b/arch/x86/kvm/vmx/x86_ops.h
+@@ -141,6 +141,8 @@ bool tdx_is_vm_type_supported(unsigned long type);
+ int tdx_offline_cpu(void);
+ 
+ int tdx_vm_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap);
++bool tdx_is_irq_event_pt(struct kvm *kvm);
++
+ int tdx_vm_init(struct kvm *kvm);
+ void tdx_mmu_release_hkid(struct kvm *kvm);
+ void tdx_vm_free(struct kvm *kvm);
+-- 
+2.34.1
+

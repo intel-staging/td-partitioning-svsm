@@ -1,0 +1,76 @@
+From 4c4d3ebaa9be22ad33b66073405724c015e6d2ef Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Sun, 10 Mar 2024 09:42:13 +0800
+Subject: [PATCH 15/26] KVM: TDX: Add macro to support accessing L2 VMCS
+
+Host VMM will need to access L2 VMCS, e.g., set shared EPTP by the
+following patch. Add the helper macros for this purpose.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.h      | 35 +++++++++++++++++++++++++++++++++++
+ arch/x86/kvm/vmx/tdx_arch.h |  4 ++++
+ 2 files changed, 39 insertions(+)
+
+diff --git a/arch/x86/kvm/vmx/tdx.h b/arch/x86/kvm/vmx/tdx.h
+index db33aec929ea..1a3937ca6e17 100644
+--- a/arch/x86/kvm/vmx/tdx.h
++++ b/arch/x86/kvm/vmx/tdx.h
+@@ -257,6 +257,41 @@ TDX_BUILD_TDVPS_ACCESSORS(64, VMCS, vmcs);
+ TDX_BUILD_TDVPS_ACCESSORS(8, MANAGEMENT, management);
+ TDX_BUILD_TDVPS_ACCESSORS(64, STATE_NON_ARCH, state_non_arch);
+ 
++#define TDX_BUILD_L2VMCS_ACCESSORS(bits)					\
++static __always_inline u##bits l2td_vmcs_read##bits(struct vcpu_tdx *tdx,	\
++						    u32 field, int vm)		\
++{										\
++	struct tdx_module_args out;						\
++	u64 err;								\
++										\
++	tdvps_vmcs_check(field, bits);						\
++	err = tdh_vp_rd(tdx->tdvpr_pa, L2VMCS_FIELD(vm, field),	&out);		\
++	if (KVM_BUG_ON(err, tdx->vcpu.kvm)) {					\
++		pr_err("TDH_VP_RD[VMCS.0x%x vm %d] failed: 0x%llx 0x%llx\n",	\
++		       field, vm, err, L2VMCS_FIELD(vm, field));		\
++		return 0;							\
++	}									\
++	return (u##bits)out.r8;							\
++}										\
++static __always_inline void l2td_vmcs_write##bits(struct vcpu_tdx *tdx,		\
++						  u32 field, u##bits val,	\
++						  int vm)			\
++{										\
++	struct tdx_module_args out;						\
++	u64 err;								\
++										\
++	tdvps_vmcs_check(field, bits);						\
++	err = tdh_vp_wr(tdx->tdvpr_pa, L2VMCS_FIELD(vm, field),			\
++			val, GENMASK_ULL(bits - 1, 0), &out);			\
++	if (KVM_BUG_ON(err, tdx->vcpu.kvm))					\
++		pr_err("TDH_VP_WR[VMCS.0x%x vm %d] = 0x%llx failed: 0x%llx 0x%llx\n", \
++		       field, vm, (u64)val, err, L2VMCS_FIELD(vm, field));	\
++}										\
++
++TDX_BUILD_L2VMCS_ACCESSORS(16);
++TDX_BUILD_L2VMCS_ACCESSORS(32);
++TDX_BUILD_L2VMCS_ACCESSORS(64);
++
+ static __always_inline u64 td_tdcs_exec_read64(struct kvm_tdx *kvm_tdx, u32 field)
+ {
+ 	struct tdx_module_args out;
+diff --git a/arch/x86/kvm/vmx/tdx_arch.h b/arch/x86/kvm/vmx/tdx_arch.h
+index b2ae6c425e58..84e68bf12564 100644
+--- a/arch/x86/kvm/vmx/tdx_arch.h
++++ b/arch/x86/kvm/vmx/tdx_arch.h
+@@ -344,4 +344,8 @@ static inline bool is_tdp_vm_id(enum tdp_vm_id vm_id)
+ 	return (vm_id >= TDP_VM_1) && (vm_id <= TDP_VM_3);
+ }
+ 
++#define TDVPS_L2VMCS_1_CLASS_CODE	36
++#define L2VMCS_CLASS(vm)		(TDVPS_L2VMCS_1_CLASS_CODE + vm * 8)
++#define L2VMCS_FIELD(vm, field)		BUILD_TDX_FIELD(L2VMCS_CLASS(vm), field)
++
+ #endif /* __KVM_X86_TDX_ARCH_H */
+-- 
+2.34.1
+

@@ -1,0 +1,48 @@
+From febd11deece1c43e201161aa77241aad4da2bc56 Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Thu, 21 Mar 2024 10:55:50 +0800
+Subject: [PATCH 25/26] KVM: TDX: Retry on the race of aug a page
+
+When one vcpu is trying to send the seamcall TDH.MEM.PAGE.AUG to populate
+SEPT, another may already be working in progress to create mapping for
+the same gfn in SEPT as well. This may result in this vcpu receive the
+error code TDX_OPERAND_BUSY, or TDX_EPT_ENTRY_STATE_INCORRECT with the
+SEPT entry state already PRESENT. Just simply retry for these cases.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index 49cf2dafd5d6..438bc2d70296 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -1909,7 +1909,8 @@ static int tdx_mem_page_aug(struct kvm *kvm, gfn_t gfn,
+ 	u64 err;
+ 
+ 	err = tdh_mem_page_aug(kvm_tdx->tdr_pa, gpa, tdx_level, hpa, &out);
+-	if (unlikely(err == TDX_ERROR_SEPT_BUSY)) {
++	if (unlikely(err == TDX_ERROR_SEPT_BUSY ||
++		     err == (TDX_OPERAND_BUSY | TDX_OPERAND_ID_RCX))) {
+ 		tdx_unpin(kvm, pfn, level);
+ 		return -EAGAIN;
+ 	}
+@@ -1924,6 +1925,14 @@ static int tdx_mem_page_aug(struct kvm *kvm, gfn_t gfn,
+ 				       TDX_TD_ATTR_SEPT_VE_DISABLE));
+ 			return -EAGAIN;
+ 		}
++
++		/* Someone updated the entry to the same value. */
++		if (level_state.level == tdx_level &&
++		    level_state.state == TDX_SEPT_PRESENT &&
++		    entry.leaf && entry.pfn == pfn) {
++			tdx_unpin(kvm, pfn, level);
++			return -EAGAIN;
++		}
+ 	}
+ 	if (KVM_BUG_ON(err, kvm)) {
+ 		pr_tdx_error(TDH_MEM_PAGE_AUG, err, &out);
+-- 
+2.34.1
+

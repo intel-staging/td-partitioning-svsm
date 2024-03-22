@@ -1,0 +1,108 @@
+From b458a7939116520f4fb0d101dbfd5a49ac4b56f2 Mon Sep 17 00:00:00 2001
+From: Vijay Dhanraj <vijay.dhanraj@intel.com>
+Date: Tue, 19 Mar 2024 05:06:13 -0700
+Subject: [PATCH 24/26] KVM: TDX: Fix SVSM shared buffer overflow
+
+During early boot, BSP is only active and APs are in zombie state.
+Any PIs posted to APs incur wake up latency to pull `irq event`
+from shared memory on SVSM side. This leads to shared buffer getting
+full in few cases. To fix this issue, limit the PIs to SVSM only
+when there is transition from assert->de-assert or vice-versa and
+skip when the pin is only de-asserted repeatedly.
+
+PS: This is temporary solution, WIP to have generic solution and
+avoid host from keeping track of vioapic12 pin state.
+
+Signed-off-by: Vijay Dhanraj <vijay.dhanraj@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c | 31 ++++++++++++++++++++++++++++++-
+ arch/x86/kvm/vmx/tdx.h |  1 +
+ 2 files changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index bfe13d6686f4..49cf2dafd5d6 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0
+ #include <linux/cpu.h>
+ #include <linux/mmu_context.h>
++#include <linux/bitops.h>
+ 
+ #include <asm/fpu/xcr.h>
+ #include <asm/tdx.h>
+@@ -719,6 +720,8 @@ static void td_partitioning_init(struct kvm_tdx *kvm_tdx)
+ 		INIT_LIST_HEAD(&kvm_tdx->l2sept_list[i].head);
+ 		spin_lock_init(&kvm_tdx->l2sept_list[i].lock);
+ 		kvm_tdx->l2_pt_irq[i].num_l2_vcpus = 0;
++		memset(&kvm_tdx->l2_pt_irq[i].ioapic_pin_state, 0,
++		       sizeof(kvm_tdx->l2_pt_irq[i].ioapic_pin_state));
+ 	}
+ }
+ 
+@@ -1670,6 +1673,23 @@ static inline u32 tdx_find_next_vcpu(u32 last_vcpu, u32 max_vcpu)
+ 	return next_vcpu % max_vcpu;
+ }
+ 
++static bool get_pin_state(struct kvm *kvm, u32 irq, u32 irq_source_id,
++			  u32 level)
++{
++	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
++
++	if (level != 0) {
++		kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq] |= 1 << irq_source_id;
++		__set_bit(irq_source_id,
++			  &kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq]);
++	} else {
++		__clear_bit(irq_source_id,
++			    &kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq]);
++	}
++
++	return !!kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq];
++}
++
+ int tdx_pt_ioapic_irq_event(struct kvm *kvm, u32 irq, u32 irq_source_id,
+ 			    u32 level)
+ {
+@@ -1678,6 +1698,9 @@ int tdx_pt_ioapic_irq_event(struct kvm *kvm, u32 irq, u32 irq_source_id,
+ 	struct kvm_vcpu *vcpu;
+ 	static u32 last_idx;
+ 	u32 next_idx;
++	bool asserted;
++	u32 last_pin_state;
++	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
+ 
+ 	ASSERT(irq >= IOAPIC_NUM_PINS);
+ 
+@@ -1698,9 +1721,15 @@ int tdx_pt_ioapic_irq_event(struct kvm *kvm, u32 irq, u32 irq_source_id,
+ 
+ 	last_idx = next_idx;
+ 
++	/* optimization to reduce PIs to svsm */
++	last_pin_state = !!kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq];
++	asserted = get_pin_state(kvm, irq, irq_source_id, level);
++	if (!asserted && last_pin_state == asserted)
++		return 1;
++
+ 	irq_event.type = KVM_IRQ_ROUTING_IRQCHIP;
+ 	irq_event.irqchip.pin = irq;
+-	irq_event.irqchip.level = level;
++	irq_event.irqchip.level = asserted;
+ 	irq_event.irqchip.source_id = irq_source_id;
+ 
+ 	ret = tdx_share_irte_info(vcpu, &irq_event);
+diff --git a/arch/x86/kvm/vmx/tdx.h b/arch/x86/kvm/vmx/tdx.h
+index cef382b72297..30755f47af20 100644
+--- a/arch/x86/kvm/vmx/tdx.h
++++ b/arch/x86/kvm/vmx/tdx.h
+@@ -70,6 +70,7 @@ struct kvm_tdx {
+ 	 */
+ 	struct {
+ 		u32 num_l2_vcpus;
++		unsigned long ioapic_pin_state[IOAPIC_NUM_PINS];
+ 	} l2_pt_irq[MAX_NUM_L2_VMS];
+ };
+ 
+-- 
+2.34.1
+

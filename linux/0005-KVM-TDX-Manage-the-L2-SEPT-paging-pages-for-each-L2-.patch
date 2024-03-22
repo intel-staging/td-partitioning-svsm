@@ -1,0 +1,112 @@
+From 5263d155df2d2ef4dd20f9535fb73b06b9c409f7 Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Sat, 9 Mar 2024 07:44:56 +0800
+Subject: [PATCH 05/26] KVM: TDX: Manage the L2 SEPT paging pages for each L2
+ VM
+
+The Host VMM is responsible for allocating paging pages for the L2 SEPT.
+To facilitate the easy reclamation of these pages when a TD is
+destroyed, a data structure called l2sept_header is introduced. This
+structure records the Host Physical Address (HPA) of the L2 SEPT paging
+pages. Each l2sept_header can be added to the l2sept_list corresponding
+to its L2 VM.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c | 30 ++++++++++++++++++++++++++++++
+ arch/x86/kvm/vmx/tdx.h | 10 ++++++++++
+ 2 files changed, 40 insertions(+)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index 3d3e5c78f6ee..91d6cc9bba59 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -20,6 +20,12 @@
+ #undef pr_fmt
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
++static struct kmem_cache *l2sept_header_cache;
++struct l2sept_header {
++	struct list_head node;
++	unsigned long page_va;
++};
++
+ /*
+  * Key id globally used by TDX module: TDX module maps TDR with this TDX global
+  * key id.  TDR includes key id assigned to the TD.  Then TDX module maps other
+@@ -582,6 +588,16 @@ static int tdx_do_tdh_mng_key_config(void *param)
+ 	return 0;
+ }
+ 
++static void td_partitioning_init(struct kvm_tdx *kvm_tdx)
++{
++	int i;
++
++	for (i = 0; i < MAX_NUM_L2_VMS; i++) {
++		INIT_LIST_HEAD(&kvm_tdx->l2sept_list[i].head);
++		spin_lock_init(&kvm_tdx->l2sept_list[i].lock);
++	}
++}
++
+ int tdx_vm_init(struct kvm *kvm)
+ {
+ 	/*
+@@ -610,6 +626,9 @@ int tdx_vm_init(struct kvm *kvm)
+ 	kvm->max_vcpus = min(kvm->max_vcpus, TDX_MAX_VCPUS);
+ 
+ 	mutex_init(&to_kvm_tdx(kvm)->source_lock);
++
++	td_partitioning_init(to_kvm_tdx(kvm));
++
+ 	return 0;
+ }
+ 
+@@ -3483,6 +3502,16 @@ int __init tdx_hardware_setup(struct kvm_x86_ops *x86_ops)
+ 	if (r)
+ 		goto out;
+ 
++	if (tdx_info->max_num_l2_vms) {
++		l2sept_header_cache = kmem_cache_create("l2sept_header",
++							sizeof(struct l2sept_header),
++							0, SLAB_ACCOUNT, NULL);
++		if (!l2sept_header_cache) {
++			r = -ENOMEM;
++			goto out;
++		}
++	}
++
+ 	x86_ops->link_private_spt = tdx_sept_link_private_spt;
+ 	x86_ops->free_private_spt = tdx_sept_free_private_spt;
+ 	x86_ops->split_private_spt = tdx_sept_split_private_spt;
+@@ -3505,6 +3534,7 @@ void tdx_hardware_unsetup(void)
+ {
+ 	kfree(tdx_info);
+ 	kfree(tdx_mng_key_config_lock);
++	kmem_cache_destroy(l2sept_header_cache);
+ }
+ 
+ int tdx_offline_cpu(void)
+diff --git a/arch/x86/kvm/vmx/tdx.h b/arch/x86/kvm/vmx/tdx.h
+index d333fc496e4c..4af0f3855c87 100644
+--- a/arch/x86/kvm/vmx/tdx.h
++++ b/arch/x86/kvm/vmx/tdx.h
+@@ -48,6 +48,16 @@ struct kvm_tdx {
+ 	/* The actual page number of tdcs/tdvpx */
+ 	u8 nr_tdcs_pages;
+ 	u8 nr_tdvpx_pages;
++
++	struct {
++		struct list_head head;
++		/*
++		 * The lock is to protect the head as it is possible multiple
++		 * CPU can access the head at the same time with adding or deling
++		 * entries.
++		 */
++		spinlock_t lock;
++	} l2sept_list[MAX_NUM_L2_VMS];
+ };
+ 
+ union tdx_exit_reason {
+-- 
+2.34.1
+

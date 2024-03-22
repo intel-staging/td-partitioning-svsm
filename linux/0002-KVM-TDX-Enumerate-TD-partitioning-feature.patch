@@ -1,0 +1,125 @@
+From 16ed19a2c9687a906471126c78e45eb04b8161a2 Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Fri, 8 Mar 2024 08:29:23 +0800
+Subject: [PATCH 02/26] KVM: TDX: Enumerate TD partitioning feature
+
+TD partitioning is a feature introduced in TDX1.5, enables the creation
+of multiple L2 VMs within a single TD. The maximum limit for L2 VMs is
+set to three. This feature is exposed to the userspace VMM as part of
+tdx_capabilities, allowing the userspace VMM to determine the number of
+L2 VMs that a L1 TD will support. Each L2 VM requires an additional
+number of pages for TDCS/TDVPS. These numbers are queried from the TDX
+module and stored as part of tdx_info.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/include/uapi/asm/kvm.h |  3 ++-
+ arch/x86/kvm/vmx/tdx.c          | 29 ++++++++++++++++++++++++++++-
+ arch/x86/kvm/vmx/tdx_arch.h     | 11 +++++++++++
+ 3 files changed, 41 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/include/uapi/asm/kvm.h b/arch/x86/include/uapi/asm/kvm.h
+index c160f60189d1..ca7e9f3c879e 100644
+--- a/arch/x86/include/uapi/asm/kvm.h
++++ b/arch/x86/include/uapi/asm/kvm.h
+@@ -618,7 +618,8 @@ struct kvm_tdx_capabilities {
+ 	__u64 xfam_fixed0;
+ 	__u64 xfam_fixed1;
+ 	__u32 supported_gpaw;
+-	__u32 padding;
++	__u8  max_num_l2_vms;
++	__u8  padding[3];
+ 	__u64 reserved[251];
+ 
+ 	__u32 nr_cpuid_configs;
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index a1d3ae09091c..c1aa1e3cbc44 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -58,6 +58,10 @@ struct tdx_info {
+ 	u8 nr_tdcs_pages;
+ 	u8 nr_tdvpx_pages;
+ 
++	u8 max_num_l2_vms;
++	u8 nr_tdcs_pages_per_l2_vm;
++	u8 nr_tdvpx_pages_per_l2_vm;
++
+ 	u16 num_cpuid_config;
+ 	/* This must the last member. */
+ 	DECLARE_FLEX_ARRAY(struct kvm_tdx_cpuid_config, cpuid_configs);
+@@ -2322,7 +2326,8 @@ static int tdx_get_capabilities(struct kvm_tdx_cmd *cmd)
+ 		((kvm_get_shadow_phys_bits() >= 52 &&
+ 		  cpu_has_vmx_ept_5levels()) ? TDX_CAP_GPAW_52 : 0),
+ 		.nr_cpuid_configs = tdx_info->num_cpuid_config,
+-		.padding = 0,
++		.max_num_l2_vms = tdx_info->max_num_l2_vms,
++		.padding = {0},
+ 	};
+ 
+ 	if (copy_to_user(user_caps, caps, sizeof(*caps))) {
+@@ -3295,6 +3300,28 @@ static int __init tdx_module_setup(void)
+ 	 */
+ 	tdx_info->nr_tdvpx_pages = tdvps_base_size / PAGE_SIZE - 1;
+ 
++	if (tdx_info->features0 & MD_FIELD_ID_FEATURES0_TD_PARTITIONING) {
++		u16 tdcs_size_per_l2_vm, tdvps_size_per_l2_vm;
++		struct tdx_md_map l2_mds[] = {
++			TDX_MD_MAP(TDCS_SIZE_PER_L2_VM, &tdcs_size_per_l2_vm),
++			TDX_MD_MAP(TDVPS_SIZE_PER_L2_VM, &tdvps_size_per_l2_vm),
++		};
++
++		ret = tdx_md_read(l2_mds, ARRAY_SIZE(l2_mds));
++		if (ret)
++			goto error_out;
++		/*
++		 * With TD partitioning feature supported, a TD can maximum support
++		 * creating 3 TD partitioning guest. Set the max_num_l2_vms with the
++		 * maximum value and user can decide the number of TD partitioning
++		 * guests accordingly.
++		 */
++		tdx_info->max_num_l2_vms = MAX_NUM_L2_VMS;
++		tdx_info->nr_tdcs_pages_per_l2_vm = tdcs_size_per_l2_vm / PAGE_SIZE;
++		tdx_info->nr_tdvpx_pages_per_l2_vm = tdvps_size_per_l2_vm / PAGE_SIZE;
++		pr_info("TDX module: TD partitioning is supported\n");
++	}
++
+ #if 0
+ 	/*
+ 	 * Make TDH.VP.ENTER preserve RBP so that the stack unwinder
+diff --git a/arch/x86/kvm/vmx/tdx_arch.h b/arch/x86/kvm/vmx/tdx_arch.h
+index a320f6d45731..4e75d336df75 100644
+--- a/arch/x86/kvm/vmx/tdx_arch.h
++++ b/arch/x86/kvm/vmx/tdx_arch.h
+@@ -254,13 +254,16 @@ enum tdx_ext_exit_qualification_type {
+ #define MD_FIELD_ID_XFAM_FIXED1			0x1900000300000003ULL
+ 
+ #define MD_FIELD_ID_TDCS_BASE_SIZE		0x9800000100000100ULL
++#define MD_FIELD_ID_TDCS_SIZE_PER_L2_VM		0x9800000100000101ULL
+ #define MD_FIELD_ID_TDVPS_BASE_SIZE		0x9800000100000200ULL
++#define MD_FIELD_ID_TDVPS_SIZE_PER_L2_VM	0x9800000100000201ULL
+ 
+ #define MD_FIELD_ID_NUM_CPUID_CONFIG		0x9900000100000004ULL
+ #define MD_FIELD_ID_CPUID_CONFIG_LEAVES		0x9900000300000400ULL
+ #define MD_FIELD_ID_CPUID_CONFIG_VALUES		0x9900000300000500ULL
+ 
+ #define MD_FIELD_ID_FEATURES0_NO_RBP_MOD	BIT_ULL(18)
++#define MD_FIELD_ID_FEATURES0_TD_PARTITIONING	BIT_ULL(7)
+ 
+ #define TDX_MAX_NR_CPUID_CONFIGS       37
+ 
+@@ -291,4 +294,12 @@ union tdx_md_field_id {
+ 	({ union tdx_md_field_id _fid = { .raw = (_field_id)};  \
+ 		_fid.element_size_code; })
+ 
++enum tdp_vm_id {
++	TDP_VM_1 = 1,
++	TDP_VM_2,
++	TDP_VM_3,
++
++	MAX_NUM_L2_VMS = TDP_VM_3,
++};
++
+ #endif /* __KVM_X86_TDX_ARCH_H */
+-- 
+2.34.1
+

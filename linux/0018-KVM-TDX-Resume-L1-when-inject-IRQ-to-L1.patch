@@ -1,0 +1,34 @@
+From d1512e76be28b1ad3161df1c208b3bf387af0eef Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Sun, 10 Mar 2024 10:07:52 +0800
+Subject: [PATCH 18/26] KVM: TDX: Resume L1 when inject IRQ to L1
+
+Before host VMM entering L2, it may need to inject an interrupt into L1.
+Typically, the host VMM would re-enter L2, which would then lead to an
+EXTERNAL_INTERRUPT vmexit from L2 to L1 to let L1 receive the interrupt.
+However, this approach incurs additional overhead. To minimize this
+overhead, the host VMM can directly resume L1, enabling it to receive
+the interrupt promptly.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index 0d42408d6ad5..4ec040256731 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -1116,6 +1116,9 @@ fastpath_t tdx_vcpu_run(struct kvm_vcpu *vcpu)
+ 	if (pi_test_on(&tdx->pi_desc)) {
+ 		apic->send_IPI_self(POSTED_INTR_VECTOR);
+ 
++		if (is_l2vmexit(vcpu))
++			tdx->resume_l1 = true;
++
+ 		kvm_wait_lapic_expire(vcpu);
+ 	}
+ 
+-- 
+2.34.1
+

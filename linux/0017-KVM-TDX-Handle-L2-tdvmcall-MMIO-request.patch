@@ -1,0 +1,47 @@
+From 20ac6049f429ae6ce011d72c4c83a588d920682d Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Sun, 10 Mar 2024 09:56:57 +0800
+Subject: [PATCH 17/26] KVM: TDX: Handle L2 tdvmcall MMIO request
+
+Host VMM can emulate virtual device models for a L2 VMs, e.g., emulating
+virtio devices. To make L2 having a better performance from the virtual
+device, L1 VMM can enable tdvmcall for a L2 VM, so that the L2 VM can
+directly sending the MMIO tdvmcall to host VMM for the device emulation.
+In this case, host VMM should handle the tdvmcall MMIO request from the
+L2 VM.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index ddb385d48e75..0d42408d6ad5 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -1571,6 +1571,22 @@ static int handle_tdvmcall(struct kvm_vcpu *vcpu)
+ 	if (tdvmcall_exit_type(vcpu))
+ 		return tdx_emulate_vmcall(vcpu);
+ 
++	if (is_l2vmexit(vcpu)) {
++		switch (tdvmcall_leaf(vcpu)) {
++		/*
++		 * L2 may access the virt device emulated by
++		 * host VMM with tdvmcall MMIO request. Host
++		 * vmm can directly emulate such MMIO.
++		 */
++		case EXIT_REASON_EPT_VIOLATION:
++			break;
++		/* Resume L1 to handle the other tdvmcalls from L2 */
++		default:
++			to_tdx(vcpu)->resume_l1 = true;
++			return 1;
++		}
++	}
++
+ 	switch (tdvmcall_leaf(vcpu)) {
+ 	case EXIT_REASON_CPUID:
+ 		return tdx_emulate_cpuid(vcpu);
+-- 
+2.34.1
+

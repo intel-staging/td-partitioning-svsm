@@ -1,0 +1,119 @@
+From bd86ab022dd1dc9c40bdee0e602038e68867c9ab Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Fri, 8 Mar 2024 16:38:58 +0800
+Subject: [PATCH 04/26] KVM: TDX: config VM_CTLS for L2 VM
+
+The ept_violation_on_l2sept in vm controls is applicable for L2 VMs. If
+set, a TDCALL that encounters an SEPT walk error causes a TD exit host.
+Else, it returns an error code to the L2 VMs. As host VMM is expected to
+handle the L2 SEPT walking failure when L1 VMM using TDCALL
+TDG.MEM.PAGE.ATTR.WR to setup the leaf entry in L2 VM's secure EPT, the
+ept_violation_on_l2sept should be set.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c      | 15 +++++++++++++++
+ arch/x86/kvm/vmx/tdx_arch.h | 13 +++++++++++++
+ arch/x86/kvm/vmx/tdx_ops.h  | 18 ++++++++++++++++++
+ 3 files changed, 46 insertions(+)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index f3ad65042f5f..3d3e5c78f6ee 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -2685,6 +2685,21 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
+ 
+ 	kvm_set_apicv_inhibit(kvm, APICV_INHIBIT_REASON_TDX);
+ 
++	for (i = 0; i < kvm_tdx->num_l2_vms; i++) {
++		enum tdp_vm_id vm_id = index_to_tdp_vm_id(i);
++		union tdx_tdcs_exec_vm_ctls vm_ctls = { .full = 0 };
++
++		vm_ctls.ept_violation_on_l2sept = 1;
++		err = tdh_mng_wr(kvm_tdx->tdr_pa,
++				 TDCS_EXEC_NON_ARCH(TD_TDCS_EXEC_VM_CTLS + vm_id),
++				 vm_ctls.full, TDX_TDCS_EXEC_VM_CTLS_VALID_MASK, &out);
++		if (WARN_ON_ONCE(err)) {
++			pr_tdx_error(TDH_MNG_WR, err, &out);
++			ret = -EIO;
++			goto teardown;
++		}
++	}
++
+ 	return 0;
+ 
+ 	/*
+diff --git a/arch/x86/kvm/vmx/tdx_arch.h b/arch/x86/kvm/vmx/tdx_arch.h
+index c34e7ac96b6c..28ac8fe4d9cf 100644
+--- a/arch/x86/kvm/vmx/tdx_arch.h
++++ b/arch/x86/kvm/vmx/tdx_arch.h
+@@ -21,6 +21,7 @@
+ #define TDH_MNG_CREATE			9
+ #define TDH_VP_CREATE			10
+ #define TDH_MNG_RD			11
++#define TDH_MNG_WR			13
+ #define TDH_MEM_PAGE_DEMOTE		15
+ #define TDH_MR_EXTEND			16
+ #define TDH_MR_FINALIZE			17
+@@ -74,10 +75,22 @@
+ 
+ enum tdx_tdcs_execution_control {
+ 	TD_TDCS_EXEC_TSC_OFFSET = 10,
++	TD_TDCS_EXEC_VM_CTLS	= 18,
+ };
+ 
++union tdx_tdcs_exec_vm_ctls {
++	struct {
++		u64 ept_violation_on_l2sept	: 1;
++		u64 reserved1_63		: 63;
++	};
++	u64 full;
++};
++
++#define TDX_TDCS_EXEC_VM_CTLS_VALID_MASK	(1ULL)
++
+ /* @field is any of enum tdx_tdcs_execution_control */
+ #define TDCS_EXEC(field)		BUILD_TDX_FIELD(TD_CLASS_EXECUTION_CONTROLS, (field))
++#define TDCS_EXEC_NON_ARCH(field)	BUILD_TDX_FIELD_NON_ARCH(17, (field))
+ 
+ /* @field is the VMCS field encoding */
+ #define TDVPS_VMCS(field)		BUILD_TDX_FIELD(TDVPS_CLASS_VMCS, (field))
+diff --git a/arch/x86/kvm/vmx/tdx_ops.h b/arch/x86/kvm/vmx/tdx_ops.h
+index bf660eefa9e0..0624d7b6803a 100644
+--- a/arch/x86/kvm/vmx/tdx_ops.h
++++ b/arch/x86/kvm/vmx/tdx_ops.h
+@@ -56,6 +56,11 @@ static inline enum pg_level tdx_sept_level_to_pg_level(int tdx_level)
+ 	return tdx_level + 1;
+ }
+ 
++static inline enum tdp_vm_id index_to_tdp_vm_id(int i)
++{
++	return i + TDP_VM_1;
++}
++
+ static inline void tdx_clflush_page(hpa_t addr, enum pg_level level)
+ {
+ 	clflush_cache_range(__va(addr), KVM_HPAGE_SIZE(level));
+@@ -241,6 +246,19 @@ static inline u64 tdh_mng_rd(hpa_t tdr, u64 field, struct tdx_module_args *out)
+ 	return tdx_seamcall(TDH_MNG_RD, &in, out);
+ }
+ 
++static inline u64 tdh_mng_wr(hpa_t tdr, u64 field, u64 data, u64 mask,
++			     struct tdx_module_args *out)
++{
++	struct tdx_module_args in = {
++		.rcx = tdr,
++		.rdx = field,
++		.r8 = data,
++		.r9 = mask,
++	};
++
++	return tdx_seamcall(TDH_MNG_WR, &in, out);
++}
++
+ static inline u64 tdh_mem_page_demote(hpa_t tdr, gpa_t gpa, int level, hpa_t page,
+ 				      struct tdx_module_args *out)
+ {
+-- 
+2.34.1
+

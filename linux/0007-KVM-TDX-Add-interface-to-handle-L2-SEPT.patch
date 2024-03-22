@@ -1,0 +1,99 @@
+From eb57ebb811f0dae9da5e41cb30b0ed7814218c55 Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Thu, 14 Mar 2024 14:04:40 +0800
+Subject: [PATCH 07/26] KVM: TDX: Add interface to handle L2 SEPT
+
+When TDX module walks the L2 SEPT, it will exit to host VMM with EPT
+violation vmexit reason if some level of L2 SEPT paging pages are
+missed. The extend exit qualification will contan the vm_index and level
+information, which can be used by host VMM to know which L2 SEPT needs
+to be built and which level of paging is missed.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c      | 21 +++++++++++++++++++++
+ arch/x86/kvm/vmx/tdx_arch.h | 10 +++++++++-
+ 2 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index 91d6cc9bba59..2e5387f1c574 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -212,6 +212,11 @@ static inline bool is_td_finalized(struct kvm_tdx *kvm_tdx)
+ 	return kvm_tdx->finalized;
+ }
+ 
++static inline bool is_valid_tdp_vm_id(struct kvm *kvm, enum tdp_vm_id vm_id)
++{
++	return (vm_id <= to_kvm_tdx(kvm)->num_l2_vms) ? is_tdp_vm_id(vm_id) : false;
++}
++
+ static inline void tdx_disassociate_vp(struct kvm_vcpu *vcpu)
+ {
+ 	lockdep_assert_irqs_disabled();
+@@ -1928,6 +1933,13 @@ void tdx_deliver_interrupt(struct kvm_lapic *apic, int delivery_mode,
+ 	__vmx_deliver_posted_interrupt(vcpu, &tdx->pi_desc, vector);
+ }
+ 
++static int tdx_handle_l2sept_walking_failure(struct kvm_vcpu *vcpu, int tdx_level,
++					     enum tdp_vm_id vm_id)
++{
++	/* TODO: add L2 SEPT support */
++	return -EOPNOTSUPP;
++}
++
+ static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
+ {
+ 	union tdx_ext_exit_qualification ext_exit_qual;
+@@ -1943,6 +1955,15 @@ static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
+ 		return 0;
+ 	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_ACCEPT) {
+ 		err_page_level = tdx_sept_level_to_pg_level(ext_exit_qual.req_sept_level);
++	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_GPA_DETAILS) {
++		enum tdp_vm_id vm_id = ext_exit_qual.vm_id;
++
++		if (KVM_BUG_ON(!is_valid_tdp_vm_id(vcpu->kvm, vm_id), vcpu->kvm)) {
++			pr_err("EPT violation with invalid vm_id %d\n", vm_id);
++			return 0;
++		}
++		err_page_level = ext_exit_qual.err_sept_level;
++		return tdx_handle_l2sept_walking_failure(vcpu, err_page_level, vm_id);
+ 	}
+ 
+ 	if (kvm_is_private_gpa(vcpu->kvm, tdexit_gpa(vcpu))) {
+diff --git a/arch/x86/kvm/vmx/tdx_arch.h b/arch/x86/kvm/vmx/tdx_arch.h
+index 28ac8fe4d9cf..1c70749820a3 100644
+--- a/arch/x86/kvm/vmx/tdx_arch.h
++++ b/arch/x86/kvm/vmx/tdx_arch.h
+@@ -245,7 +245,9 @@ union tdx_ext_exit_qualification {
+ 		u64 err_sept_level	:  3;
+ 		u64 err_sept_state	:  8;
+ 		u64 err_sept_is_leaf	:  1;
+-		u64 reserved1		: 17;
++		u64 reserved1		:  5;
++		u64 vm_id		:  2;
++		u64 reserved2		: 10;
+ 	};
+ 	u64 full;
+ };
+@@ -253,6 +255,7 @@ union tdx_ext_exit_qualification {
+ enum tdx_ext_exit_qualification_type {
+ 	EXT_EXIT_QUAL_NONE = 0,
+ 	EXT_EXIT_QUAL_ACCEPT = 1,
++	EXT_EXIT_QUAL_GPA_DETAILS = 2,
+ 	NUM_EXT_EXIT_QUAL,
+ };
+ 
+@@ -316,4 +319,9 @@ enum tdp_vm_id {
+ 	MAX_NUM_L2_VMS = TDP_VM_3,
+ };
+ 
++static inline bool is_tdp_vm_id(enum tdp_vm_id vm_id)
++{
++	return (vm_id >= TDP_VM_1) && (vm_id <= TDP_VM_3);
++}
++
+ #endif /* __KVM_X86_TDX_ARCH_H */
+-- 
+2.34.1
+

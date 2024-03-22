@@ -1,0 +1,42 @@
+From 70e5a23d6145df0ef8135eca25d453c5552eb781 Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Thu, 14 Mar 2024 08:53:23 +0800
+Subject: [PATCH 13/26] KVM: TDX: Resume L1 for L2 MMIO EPT violation
+
+Host VMM is not able to fetch and decode L2 instructions. The EPT
+violation caused by L2 accessing a virtual MMIO should be routed to L1
+VMM to do the first level handling.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index 5af15576fc66..a2139010e531 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -2169,6 +2169,20 @@ static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
+ 		return tdx_handle_l2sept_walking_failure(vcpu, err_page_level, vm_id);
+ 	}
+ 
++	if (is_l2vmexit(vcpu)) {
++		gfn_t gfn = gpa_to_gfn(tdexit_gpa(vcpu)) & ~kvm_gfn_shared_mask(vcpu->kvm);
++		struct kvm_memory_slot *slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
++
++		if (!slot) {
++			/*
++			 * An EPT violation caused by L2 GPA without backing
++			 * memory means this is for L2 MMIO. Let L1 VMM to handle.
++			 */
++			to_tdx(vcpu)->resume_l1 = true;
++			return 1;
++		}
++	}
++
+ 	if (kvm_is_private_gpa(vcpu->kvm, tdexit_gpa(vcpu))) {
+ 		/*
+ 		 * Always treat SEPT violations as write faults.  Ignore the
+-- 
+2.34.1
+

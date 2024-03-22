@@ -1,0 +1,54 @@
+From 9dce944ff5afaf20ef0aeefbfc8873775142a5da Mon Sep 17 00:00:00 2001
+From: Vijay Dhanraj <vijay.dhanraj@intel.com>
+Date: Sun, 3 Mar 2024 18:59:04 -0800
+Subject: [PATCH 21/26] KVM: TDX: Define irq event to share with SVSM
+
+Introduce `shared_irq_event` structure to pass through
+irq info from host to SVSM using the shared buffer.
+
+Signed-off-by: Vijay Dhanraj <vijay.dhanraj@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.h | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/arch/x86/kvm/vmx/tdx.h b/arch/x86/kvm/vmx/tdx.h
+index d39e096c0fae..929b1074e35f 100644
+--- a/arch/x86/kvm/vmx/tdx.h
++++ b/arch/x86/kvm/vmx/tdx.h
+@@ -118,8 +118,33 @@ struct sirte_header {
+ 	struct meta_data mdata;
+ };
+ 
++struct shared_irq_event {
++	u32 type;
++	union {
++		struct {
++			u8 dest_mode:1;
++			u8 trig_mode:1;
++			u8 delivery_mode:3;
++			u8 padding:3;
++			u8 vector;
++			u8 dest_id;
++			u8 rsvd[5];
++			u32 rsvd1;
++		} msi;
++		struct {
++			u32 pin;
++			u32 level;
++			u32 source_id;
++		} irqchip;
++	};
++} __aligned(16);
++
++#define NUM_IRQ_EVENTS					\
++	((PAGE_SIZE - sizeof(struct sirte_header)) /	\
++	sizeof(struct shared_irq_event))
+ struct sirte_page {
+ 	struct sirte_header sirte_hdr;
++	struct shared_irq_event data[NUM_IRQ_EVENTS];
+ } __aligned(4096);
+ 
+ struct vcpu_tdx {
+-- 
+2.34.1
+
