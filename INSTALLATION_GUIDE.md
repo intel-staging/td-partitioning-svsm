@@ -74,7 +74,7 @@ Download and apply series#5:
 
 Series#6 and series#7 are included in the SVSM repo, so no need to download but just apply the patches:
 
-    $ git am <TDP-patches-folder>/linux/*.patch
+    $ git am <TDP-patches-folder>/linux/*\.patch
 
 ## 3. Build and Install Host Kernel
 
@@ -132,7 +132,7 @@ Download and apply series#2:
 
 Series#3 is included in the SVSM repo, so no need to download but just apply the patches:
 
-    $git am <TDP-patches-folder>/qemu/*.patch
+    $git am <TDP-patches-folder>/qemu/*\.patch
 
 ## 3. Build and Install Host QEMU
 
@@ -159,7 +159,7 @@ Download the source code:
 
 Series#1 is included in the SVSM repo, so no need to download but just apply the patches:
 
-    $ git am <TDP-patches-folder>/ovmf/*.patch
+    $ git am --ignore-whitespace <TDP-patches-folder>/ovmf/*\.patch
 
 ## 3. Build and Install OVMF
 
