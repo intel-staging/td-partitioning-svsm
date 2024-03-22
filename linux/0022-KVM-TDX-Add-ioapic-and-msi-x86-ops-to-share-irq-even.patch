@@ -1,0 +1,262 @@
+From c7bd7f329f383280f543df83636008e584b5f8c4 Mon Sep 17 00:00:00 2001
+From: Vijay Dhanraj <vijay.dhanraj@intel.com>
+Date: Sun, 3 Mar 2024 19:26:52 -0800
+Subject: [PATCH 22/25] KVM: TDX: Add ioapic and msi x86 ops to share irq event
+
+This commit introduces two x86 ops to share ioapic/msi
+event to L1,
+	1. kvm_x86_pt_ioapic_irq_event
+	2. kvm_x86_pt_msi_irq_event
+
+Also, add shared buffer helper functions to copy event
+into the shared buffer and get the next available
+shared buffer location.
+
+Signed-off-by: Vijay Dhanraj <vijay.dhanraj@intel.com>
+---
+ arch/x86/include/asm/kvm-x86-ops.h |   2 +
+ arch/x86/include/asm/kvm_host.h    |   4 +
+ arch/x86/kvm/vmx/main.c            |   2 +
+ arch/x86/kvm/vmx/tdx.c             | 140 +++++++++++++++++++++++++++++
+ arch/x86/kvm/vmx/tdx.h             |   5 ++
+ arch/x86/kvm/vmx/x86_ops.h         |   2 +
+ 6 files changed, 155 insertions(+)
+
+diff --git a/arch/x86/include/asm/kvm-x86-ops.h b/arch/x86/include/asm/kvm-x86-ops.h
+index 6dd5bc9ea881..c5edae726a9c 100644
+--- a/arch/x86/include/asm/kvm-x86-ops.h
++++ b/arch/x86/include/asm/kvm-x86-ops.h
+@@ -161,6 +161,8 @@ KVM_X86_OP_OPTIONAL_RET0(gmem_max_level)
+ KVM_X86_OP_OPTIONAL(pre_memory_mapping);
+ KVM_X86_OP_OPTIONAL(post_memory_mapping);
+ KVM_X86_OP_OPTIONAL(is_irq_event_pt)
++KVM_X86_OP_OPTIONAL(pt_ioapic_irq_event)
++KVM_X86_OP_OPTIONAL(pt_msi_irq_event)
+ 
+ #undef KVM_X86_OP
+ #undef KVM_X86_OP_OPTIONAL
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 18479a5d181b..1f53dd958bcc 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -1874,6 +1874,10 @@ struct kvm_x86_ops {
+ 	void (*post_memory_mapping)(struct kvm_vcpu *vcpu,
+ 				    struct kvm_memory_mapping *mapping);
+ 	bool (*is_irq_event_pt)(struct kvm *kvm);
++	int (*pt_ioapic_irq_event)(struct kvm *kvm, u32 irq, u32 irq_source_id,
++				   u32 level);
++	int (*pt_msi_irq_event)(struct kvm *kvm, struct kvm_vcpu *vcpu,
++				struct kvm_lapic_irq *irq);
+ };
+ 
+ struct kvm_x86_nested_ops {
+diff --git a/arch/x86/kvm/vmx/main.c b/arch/x86/kvm/vmx/main.c
+index 8b84bd4aeb3f..4dbb8cfb23ed 100644
+--- a/arch/x86/kvm/vmx/main.c
++++ b/arch/x86/kvm/vmx/main.c
+@@ -1195,6 +1195,8 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
+ 	.post_memory_mapping = vt_post_memory_mapping,
+ 
+ 	.is_irq_event_pt = tdx_is_irq_event_pt,
++	.pt_ioapic_irq_event = tdx_pt_ioapic_irq_event,
++	.pt_msi_irq_event = tdx_pt_msi_irq_event,
+ };
+ 
+ struct kvm_x86_init_ops vt_init_ops __initdata = {
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index ca9646156a0e..bfe13d6686f4 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -1570,6 +1570,143 @@ static int tdx_get_td_vm_call_info(struct kvm_vcpu *vcpu)
+ 	return 1;
+ }
+ 
++static u32 tdx_sirte_put(struct meta_data *mdata,
++			 struct shared_irq_event *addr, void *data)
++{
++	void *to;
++	u32 next_tail;
++	u32 cur_tail;
++	u32 cur_head;
++	u32 elem_size;
++
++	cur_head = mdata->head;
++	cur_tail = mdata->tail;
++	next_tail = ((cur_tail + 1) >= mdata->num_elem) ? 0 : cur_tail + 1;
++
++	if (next_tail == cur_head) {
++		/* overrun is not supported, return 0 directly */
++		elem_size = 0U;
++	} else {
++		to = (void *)&addr[cur_tail];
++
++		memcpy(to, data, mdata->elem_size);
++		/* Ensure data is copied to the shared buffer before updating tail. */
++		__wmb();
++
++		mdata->tail = next_tail;
++		elem_size = mdata->elem_size;
++	}
++
++	return elem_size;
++}
++
++static int tdx_share_irte_info(struct kvm_vcpu *vcpu,
++			       struct shared_irq_event *irq_event)
++{
++	int ret;
++	void *pinned_page;
++	struct sirte_page *sirte_base;
++	struct kvm_lapic *apic;
++	struct vcpu_tdx *tdx_vcpu = to_tdx(vcpu);
++
++	if (!tdx_vcpu->pinned_page) {
++		pr_err("%s: no shared memory available!", __func__);
++		return -1;
++	}
++
++	pinned_page = page_address(tdx_vcpu->pinned_page);
++	sirte_base = (struct sirte_page *)pinned_page;
++
++	spin_lock(&tdx_vcpu->sirte_lock);
++	ret = tdx_sirte_put(&sirte_base->sirte_hdr.mdata, sirte_base->data,
++			    (void *)irq_event);
++	spin_unlock(&tdx_vcpu->sirte_lock);
++
++	if (!ret) {
++		pr_err("%s: shared buf is full!", __func__);
++		ret = -1;
++		goto out;
++	}
++
++	/*
++	 * We always return 1 to userspace as host doesn't know the RTE entry
++	 * for the pin to know if it is a edge or level triggered interrupt
++	 * and also the remote irr status.
++	 */
++	ret = 1;
++out:
++	apic = vcpu->arch.apic;
++	/* delivery_mode and trig_mode are *NOT* used so setting 0 */
++	tdx_deliver_interrupt(apic, 0, 0, tdx_vcpu->shared_irte_pir);
++
++	return ret;
++}
++
++int tdx_pt_msi_irq_event(struct kvm *kvm, struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq)
++{
++	int ret;
++	struct shared_irq_event irq_event;
++
++	/* Not expecting reserved vectors here */
++	ASSERT(irq->vector < 32);
++
++	irq_event.type = KVM_IRQ_ROUTING_MSI;
++	irq_event.msi.vector = irq->vector;
++	irq_event.msi.delivery_mode = irq->delivery_mode;
++	irq_event.msi.dest_mode = (irq->dest_mode == APIC_DEST_LOGICAL);
++	irq_event.msi.trig_mode = irq->trig_mode;
++	irq_event.msi.dest_id = irq->dest_id;
++
++	ret = tdx_share_irte_info(vcpu, &irq_event);
++
++	return ret;
++}
++
++/* rotate vcpu selection to inject ioapic interrupt to SVSM */
++static inline u32 tdx_find_next_vcpu(u32 last_vcpu, u32 max_vcpu)
++{
++	u32 next_vcpu = last_vcpu + 1;
++
++	return next_vcpu % max_vcpu;
++}
++
++int tdx_pt_ioapic_irq_event(struct kvm *kvm, u32 irq, u32 irq_source_id,
++			    u32 level)
++{
++	int ret;
++	struct shared_irq_event irq_event;
++	struct kvm_vcpu *vcpu;
++	static u32 last_idx;
++	u32 next_idx;
++
++	ASSERT(irq >= IOAPIC_NUM_PINS);
++
++	/*
++	 * FIXME: Current implementation doesn't support KVM_IRQFD_RESAMPLE_IRQ_SOURCE_ID
++	 * as we don't send an EOI back to host. But this will be fixed in future.
++	 * Until then catch this case with an assert.
++	 */
++	ASSERT(irq_source_id == KVM_IRQFD_RESAMPLE_IRQ_SOURCE_ID);
++
++	next_idx =
++		tdx_find_next_vcpu(last_idx, atomic_read(&kvm->online_vcpus));
++	vcpu = kvm_get_vcpu(kvm, next_idx);
++	if (!vcpu) {
++		pr_err("%s: vcpu not found!", __func__);
++		return -1;
++	}
++
++	last_idx = next_idx;
++
++	irq_event.type = KVM_IRQ_ROUTING_IRQCHIP;
++	irq_event.irqchip.pin = irq;
++	irq_event.irqchip.level = level;
++	irq_event.irqchip.source_id = irq_source_id;
++
++	ret = tdx_share_irte_info(vcpu, &irq_event);
++	return ret;
++}
++
+ bool tdx_is_irq_event_pt(struct kvm *kvm)
+ {
+ 	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
+@@ -1639,6 +1776,9 @@ static int tdx_handle_shared_irte_header(struct kvm_vcpu *vcpu)
+ 	 */
+ 	kvm_tdx->l2_pt_irq[vm_idx].num_l2_vcpus++;
+ 
++	/* Init lock for the sirte page */
++	spin_lock_init(&tdx_vcpu->sirte_lock);
++
+ 	shared_page_vaddr = page_address(page);
+ 	if (!shared_page_vaddr) {
+ 		pr_err("%s: invalid shared_irte_hva\n", __func__);
+diff --git a/arch/x86/kvm/vmx/tdx.h b/arch/x86/kvm/vmx/tdx.h
+index 929b1074e35f..cef382b72297 100644
+--- a/arch/x86/kvm/vmx/tdx.h
++++ b/arch/x86/kvm/vmx/tdx.h
+@@ -7,6 +7,7 @@
+ #include "posted_intr.h"
+ #include "pmu_intel.h"
+ #include "tdx_ops.h"
++#include "ioapic.h"
+ 
+ struct kvm_tdx {
+ 	struct kvm kvm;
+@@ -197,6 +198,10 @@ struct vcpu_tdx {
+ 	/* Shared page to pass irq event to L1 */
+ 	struct page *pinned_page;
+ 	u8 shared_irte_pir;
++	/*
++	 * spinlock to serialize the entry of irq event in the shared page.
++	 */
++	spinlock_t sirte_lock;
+ };
+ 
+ static inline bool is_td(struct kvm *kvm)
+diff --git a/arch/x86/kvm/vmx/x86_ops.h b/arch/x86/kvm/vmx/x86_ops.h
+index 1c1996c64d7f..a96242752523 100644
+--- a/arch/x86/kvm/vmx/x86_ops.h
++++ b/arch/x86/kvm/vmx/x86_ops.h
+@@ -142,6 +142,8 @@ int tdx_offline_cpu(void);
+ 
+ int tdx_vm_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap);
+ bool tdx_is_irq_event_pt(struct kvm *kvm);
++int tdx_pt_ioapic_irq_event(struct kvm *kvm, u32 irq, u32 irq_source_id, u32 level);
++int tdx_pt_msi_irq_event(struct kvm *kvm, struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq);
+ 
+ int tdx_vm_init(struct kvm *kvm);
+ void tdx_mmu_release_hkid(struct kvm *kvm);
+-- 
+2.34.1
+

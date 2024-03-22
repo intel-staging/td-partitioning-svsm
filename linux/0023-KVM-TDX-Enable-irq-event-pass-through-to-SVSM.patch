@@ -1,0 +1,187 @@
+From 465b8e3eff6eee17810f3325cbb6142d7fb8c871 Mon Sep 17 00:00:00 2001
+From: Vijay Dhanraj <vijay.dhanraj@intel.com>
+Date: Sun, 3 Mar 2024 20:18:29 -0800
+Subject: [PATCH 23/25] KVM: TDX: Enable irq event pass through to SVSM
+
+With vioapic being emulated in SVSM, pass through irq
+event(both msi/irqchip) info using the shared buffer
+to SVSM. SVSM will use the raw irq event to redirect
+to appropriate vcpu.
+
+Also, this commits adds a new variable `is_msi` to
+"struct kvm_lapic_irq" to differentiate msi event
+from other lapic/ioapic events.
+
+Signed-off-by: Vijay Dhanraj <vijay.dhanraj@intel.com>
+---
+ arch/x86/include/asm/kvm_host.h |  1 +
+ arch/x86/kvm/ioapic.c           |  1 +
+ arch/x86/kvm/irq_comm.c         | 11 ++++++++-
+ arch/x86/kvm/lapic.c            | 43 +++++++++++++++++++++------------
+ arch/x86/kvm/x86.c              |  1 +
+ 5 files changed, 41 insertions(+), 16 deletions(-)
+
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 1f53dd958bcc..3191a92638ba 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -1627,6 +1627,7 @@ struct kvm_lapic_irq {
+ 	u32 shorthand;
+ 	u32 dest_id;
+ 	bool msi_redir_hint;
++	bool is_msi;
+ };
+ 
+ static inline u16 kvm_lapic_irq_dest_mode(bool dest_mode_logical)
+diff --git a/arch/x86/kvm/ioapic.c b/arch/x86/kvm/ioapic.c
+index 995eb5054360..57a1975c923a 100644
+--- a/arch/x86/kvm/ioapic.c
++++ b/arch/x86/kvm/ioapic.c
+@@ -458,6 +458,7 @@ static int ioapic_service(struct kvm_ioapic *ioapic, int irq, bool line_status)
+ 	irqe.level = 1;
+ 	irqe.shorthand = APIC_DEST_NOSHORT;
+ 	irqe.msi_redir_hint = false;
++	irqe.is_msi = false;
+ 
+ 	if (irqe.trig_mode == IOAPIC_EDGE_TRIG)
+ 		ioapic->irr_delivered |= 1 << irq;
+diff --git a/arch/x86/kvm/irq_comm.c b/arch/x86/kvm/irq_comm.c
+index 68f3f6c26046..1d840d544d63 100644
+--- a/arch/x86/kvm/irq_comm.c
++++ b/arch/x86/kvm/irq_comm.c
+@@ -40,8 +40,16 @@ static int kvm_set_ioapic_irq(struct kvm_kernel_irq_routing_entry *e,
+ 			      bool line_status)
+ {
+ 	struct kvm_ioapic *ioapic = kvm->arch.vioapic;
++
++	if (static_call(kvm_x86_is_irq_event_pt)(kvm)) {
++		return static_call(kvm_x86_pt_ioapic_irq_event)(kvm,
++							       e->irqchip.pin,
++							       irq_source_id,
++							       level);
++	}
++
+ 	return kvm_ioapic_set_irq(ioapic, e->irqchip.pin, irq_source_id, level,
+-				line_status);
++				 line_status);
+ }
+ 
+ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
+@@ -119,6 +127,7 @@ void kvm_set_msi_irq(struct kvm *kvm, struct kvm_kernel_irq_routing_entry *e,
+ 	irq->msi_redir_hint = msg.arch_addr_lo.redirect_hint;
+ 	irq->level = 1;
+ 	irq->shorthand = APIC_DEST_NOSHORT;
++	irq->is_msi = true;
+ }
+ EXPORT_SYMBOL_GPL(kvm_set_msi_irq);
+ 
+diff --git a/arch/x86/kvm/lapic.c b/arch/x86/kvm/lapic.c
+index 431074679e83..005ad70faf7e 100644
+--- a/arch/x86/kvm/lapic.c
++++ b/arch/x86/kvm/lapic.c
+@@ -813,8 +813,7 @@ int kvm_lapic_find_highest_irr(struct kvm_vcpu *vcpu)
+ }
+ EXPORT_SYMBOL_GPL(kvm_lapic_find_highest_irr);
+ 
+-static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
+-			     int vector, int level, int trig_mode,
++static int __apic_accept_irq(struct kvm_lapic *apic, struct kvm_lapic_irq *irq,
+ 			     struct dest_map *dest_map);
+ 
+ int kvm_apic_set_irq(struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq,
+@@ -822,8 +821,7 @@ int kvm_apic_set_irq(struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq,
+ {
+ 	struct kvm_lapic *apic = vcpu->arch.apic;
+ 
+-	return __apic_accept_irq(apic, irq->delivery_mode, irq->vector,
+-			irq->level, irq->trig_mode, dest_map);
++	return __apic_accept_irq(apic, irq, dest_map);
+ }
+ 
+ static int __pv_send_ipi(unsigned long *ipi_bitmap, struct kvm_apic_map *map,
+@@ -1285,11 +1283,14 @@ bool kvm_intr_is_single_vcpu_fast(struct kvm *kvm, struct kvm_lapic_irq *irq,
+  * Add a pending IRQ into lapic.
+  * Return 1 if successfully added and 0 if discarded.
+  */
+-static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
+-			     int vector, int level, int trig_mode,
++static int __apic_accept_irq(struct kvm_lapic *apic, struct kvm_lapic_irq *irq,
+ 			     struct dest_map *dest_map)
+ {
+ 	int result = 0;
++	int delivery_mode = irq->delivery_mode;
++	int vector = irq->vector;
++	int level = irq->level;
++	int trig_mode = irq->trig_mode;
+ 	struct kvm_vcpu *vcpu = apic->vcpu;
+ 
+ 	trace_kvm_apic_accept_irq(vcpu->vcpu_id, delivery_mode,
+@@ -1322,8 +1323,17 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
+ 						       apic->regs + APIC_TMR);
+ 		}
+ 
+-		static_call(kvm_x86_deliver_interrupt)(apic, delivery_mode,
+-						       trig_mode, vector);
++		if (irq->is_msi &&
++		    static_call(kvm_x86_is_irq_event_pt)(vcpu->kvm)) {
++			/* return no. of cpus the interrupt was injected to */
++			static_call(kvm_x86_pt_msi_irq_event)(vcpu->kvm, vcpu,
++							      irq);
++		} else {
++			static_call(kvm_x86_deliver_interrupt)(apic,
++							       delivery_mode,
++							       trig_mode,
++							       vector);
++		}
+ 		break;
+ 
+ 	case APIC_DM_REMRD:
+@@ -1512,6 +1522,8 @@ void kvm_apic_send_ipi(struct kvm_lapic *apic, u32 icr_low, u32 icr_high)
+ 	irq.trig_mode = icr_low & APIC_INT_LEVELTRIG;
+ 	irq.shorthand = icr_low & APIC_SHORT_MASK;
+ 	irq.msi_redir_hint = false;
++	irq.is_msi = false;
++
+ 	if (apic_x2apic_mode(apic))
+ 		irq.dest_id = icr_high;
+ 	else
+@@ -2767,16 +2779,17 @@ int apic_has_pending_timer(struct kvm_vcpu *vcpu)
+ 
+ int kvm_apic_local_deliver(struct kvm_lapic *apic, int lvt_type)
+ {
+-	u32 reg = kvm_lapic_get_reg(apic, lvt_type);
+-	int vector, mode, trig_mode;
+ 	int r;
++	u32 reg = kvm_lapic_get_reg(apic, lvt_type);
++	struct kvm_lapic_irq irq = {0};
+ 
+ 	if (kvm_apic_hw_enabled(apic) && !(reg & APIC_LVT_MASKED)) {
+-		vector = reg & APIC_VECTOR_MASK;
+-		mode = reg & APIC_MODE_MASK;
+-		trig_mode = reg & APIC_LVT_LEVEL_TRIGGER;
+-
+-		r = __apic_accept_irq(apic, mode, vector, 1, trig_mode, NULL);
++		irq.vector = reg & APIC_VECTOR_MASK;
++		irq.delivery_mode = reg & APIC_MODE_MASK;
++		irq.trig_mode = reg & APIC_LVT_LEVEL_TRIGGER;
++		irq.level = 1;
++		irq.is_msi = false;
++		r = __apic_accept_irq(apic, &irq, NULL);
+ 		if (r && lvt_type == APIC_LVTPC)
+ 			kvm_lapic_set_reg(apic, APIC_LVTPC, reg | APIC_LVT_MASKED);
+ 		return r;
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 0e1d3853eeb4..a3190db7b62f 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -9983,6 +9983,7 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, int apicid)
+ 		.dest_mode = APIC_DEST_PHYSICAL,
+ 		.shorthand = APIC_DEST_NOSHORT,
+ 		.dest_id = apicid,
++		.is_msi = false,
+ 	};
+ 
+ 	kvm_irq_delivery_to_apic(kvm, NULL, &lapic_irq, NULL);
+-- 
+2.34.1
+

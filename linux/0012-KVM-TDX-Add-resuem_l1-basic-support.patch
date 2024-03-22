@@ -1,0 +1,111 @@
+From d30181f4ab959092de883203011fb60619b58633 Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Thu, 14 Mar 2024 08:51:35 +0800
+Subject: [PATCH 12/25] KVM: TDX: Add resuem_l1 basic support
+
+Resume_l1 is the bit53 of RCX as the input operand for TDH.VP.ENTER. It
+is applicable after TD exits from an L2 VM. Setting resume_l1 to 1 can
+make TDX module to resume L1 TD instead of entering the previous L2 VM
+which caused this vmexit.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c      | 15 ++++++++++++++-
+ arch/x86/kvm/vmx/tdx.h      |  2 ++
+ arch/x86/kvm/vmx/tdx_arch.h | 20 ++++++++++++++++++++
+ 3 files changed, 36 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index c1a02fb82e55..5af15576fc66 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -231,6 +231,13 @@ static inline bool is_valid_tdp_vm_id(struct kvm *kvm, enum tdp_vm_id vm_id)
+ 	return (vm_id <= to_kvm_tdx(kvm)->num_l2_vms) ? is_tdp_vm_id(vm_id) : false;
+ }
+ 
++static inline bool is_l2vmexit(struct kvm_vcpu *vcpu)
++{
++	union tdx_exit_info exit_info = { .full = tdexit_exit_qual(vcpu) };
++
++	return is_valid_tdp_vm_id(vcpu->kvm, exit_info.vm);
++}
++
+ static inline hpa_t l2sept_hpa_from_output(struct kvm *kvm, enum tdp_vm_id vm_id,
+ 					   struct tdx_module_args *out)
+ {
+@@ -1023,6 +1030,7 @@ static void tdx_restore_host_xsave_state(struct kvm_vcpu *vcpu)
+ 
+ static noinstr void tdx_vcpu_enter_exit(struct vcpu_tdx *tdx)
+ {
++	union tdx_vpenter_handle_flags handle_flags = { .full = tdx->tdvpr_pa };
+ 	struct tdx_module_args args;
+ 
+ 	/*
+@@ -1031,6 +1039,11 @@ static noinstr void tdx_vcpu_enter_exit(struct vcpu_tdx *tdx)
+ 	 */
+ 	struct kvm_vcpu *vcpu = &tdx->vcpu;
+ 
++	if (tdx->resume_l1) {
++		handle_flags.resume_l1 = 1;
++		tdx->resume_l1 = false;
++	}
++
+ 	guest_state_enter_irqoff();
+ 
+ 	/*
+@@ -1040,7 +1053,7 @@ static noinstr void tdx_vcpu_enter_exit(struct vcpu_tdx *tdx)
+ 	 *   which means TDG.VP.VMCALL.
+ 	 */
+ 	args = (struct tdx_module_args) {
+-		.rcx = tdx->tdvpr_pa,
++		.rcx = handle_flags.full,
+ #define REG(reg, REG)	.reg = vcpu->arch.regs[VCPU_REGS_ ## REG]
+ 		REG(rdx, RDX),
+ 		REG(r8,  R8),
+diff --git a/arch/x86/kvm/vmx/tdx.h b/arch/x86/kvm/vmx/tdx.h
+index 4af0f3855c87..db33aec929ea 100644
+--- a/arch/x86/kvm/vmx/tdx.h
++++ b/arch/x86/kvm/vmx/tdx.h
+@@ -135,6 +135,8 @@ struct vcpu_tdx {
+ 	 * TODO: Support PMU for TDX.  Future work.
+ 	 */
+ 	struct lbr_desc lbr_desc;
++
++	bool resume_l1;
+ };
+ 
+ static inline bool is_td(struct kvm *kvm)
+diff --git a/arch/x86/kvm/vmx/tdx_arch.h b/arch/x86/kvm/vmx/tdx_arch.h
+index d3bcf6287620..b2ae6c425e58 100644
+--- a/arch/x86/kvm/vmx/tdx_arch.h
++++ b/arch/x86/kvm/vmx/tdx_arch.h
+@@ -259,6 +259,26 @@ enum tdx_ext_exit_qualification_type {
+ 	EXT_EXIT_ATTR_WR = 5,
+ };
+ 
++union tdx_exit_info {
++	struct {
++		u64 exit_qual		: 32;
++		u64 vm			: 2;
++		u64 reserved34_63	: 30;
++	};
++	u64 full;
++};
++
++union tdx_vpenter_handle_flags {
++	struct {
++		u64 reserved0_11	: 12;
++		u64 tdvpr_hpa		: 40;
++		u64 host_recover_hint	: 1;
++		u64 resume_l1		: 1;
++		u64 reserved54_63	: 10;
++	};
++	u64 full;
++};
++
+ /*
+  * Global scope metadata field ID.
+  * See Table "Global Scope Metadata", TDX module 1.5 ABI spec.
+-- 
+2.34.1
+

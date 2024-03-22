@@ -1,0 +1,213 @@
+From f70b612b26744ef0230c29d8abd5f8c96f847a2a Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Fri, 8 Mar 2024 08:55:53 +0800
+Subject: [PATCH 03/25] KVM: TDX: Allow TD to create L2 TD partitioning guests
+
+The userspace VMM can determine the number of L2 VMs supported by a
+single TD through the exposed TDX capabilities. A new flag has been
+introduced in kvm_tdx_init_vm, allowing the userspace VMM to specify the
+exact number of L2 VMs it requires. This value is then set to the new
+field NUM_L2_VMS in td_params for TDX module to reference.
+
+With NUM_L2_VMS set in td_params, each L2 VM requires additional pages
+for TDCS/TDVPS. The number of tdcs_pages and tdvpx_pages are stored in
+the kvm_tdx on a per-VM basis, and pages are allocated accordingly.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/include/uapi/asm/kvm.h |  4 +++-
+ arch/x86/kvm/vmx/tdx.c          | 42 +++++++++++++++++++++++----------
+ arch/x86/kvm/vmx/tdx.h          |  7 ++++++
+ arch/x86/kvm/vmx/tdx_arch.h     |  3 ++-
+ 4 files changed, 42 insertions(+), 14 deletions(-)
+
+diff --git a/arch/x86/include/uapi/asm/kvm.h b/arch/x86/include/uapi/asm/kvm.h
+index ca7e9f3c879e..36c917862b86 100644
+--- a/arch/x86/include/uapi/asm/kvm.h
++++ b/arch/x86/include/uapi/asm/kvm.h
+@@ -631,13 +631,15 @@ struct kvm_tdx_init_vm {
+ 	__u64 mrconfigid[6];	/* sha384 digest */
+ 	__u64 mrowner[6];	/* sha384 digest */
+ 	__u64 mrownerconfig[6];	/* sha384 digest */
++	__u8  num_l2_vms;
++	__u8  padding[7];
+ 	/*
+ 	 * For future extensibility to make sizeof(struct kvm_tdx_init_vm) = 8KB.
+ 	 * This should be enough given sizeof(TD_PARAMS) = 1024.
+ 	 * 8KB was chosen given because
+ 	 * sizeof(struct kvm_cpuid_entry2) * KVM_MAX_CPUID_ENTRIES(=256) = 8KB.
+ 	 */
+-	__u64 reserved[1004];
++	__u64 reserved[1003];
+ 
+ 	/*
+ 	 * Call KVM_TDX_INIT_VM before vcpu creation, thus before
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index c1aa1e3cbc44..f3ad65042f5f 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -527,7 +527,7 @@ void tdx_vm_free(struct kvm *kvm)
+ 		return;
+ 
+ 	if (kvm_tdx->tdcs_pa) {
+-		for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
++		for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
+ 			if (kvm_tdx->tdcs_pa[i])
+ 				tdx_reclaim_control_page(kvm_tdx->tdcs_pa[i]);
+ 		}
+@@ -778,6 +778,7 @@ void tdx_vcpu_put(struct kvm_vcpu *vcpu)
+ 
+ void tdx_vcpu_free(struct kvm_vcpu *vcpu)
+ {
++	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
+ 	struct vcpu_tdx *tdx = to_tdx(vcpu);
+ 	int i;
+ 
+@@ -803,7 +804,7 @@ void tdx_vcpu_free(struct kvm_vcpu *vcpu)
+ 	}
+ 
+ 	if (tdx->tdvpx_pa) {
+-		for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
++		for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
+ 			if (tdx->tdvpx_pa[i])
+ 				tdx_reclaim_control_page(tdx->tdvpx_pa[i]);
+ 		}
+@@ -2506,6 +2507,13 @@ static int setup_tdparams(struct kvm *kvm, struct td_params *td_params,
+ 	if (ret)
+ 		return ret;
+ 
++	if (init_vm->num_l2_vms > tdx_info->max_num_l2_vms) {
++		pr_err("TDX: Invalid num_l2_vms %d, maximum %d\n",
++		       init_vm->num_l2_vms, tdx_info->max_num_l2_vms);
++		return -EOPNOTSUPP;
++	}
++	td_params->num_l2_vms = init_vm->num_l2_vms;
++
+ #define MEMCPY_SAME_SIZE(dst, src)				\
+ 	do {							\
+ 		BUILD_BUG_ON(sizeof(dst) != sizeof(src));	\
+@@ -2544,11 +2552,21 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
+ 		goto free_hkid;
+ 	tdr_pa = __pa(va);
+ 
+-	tdcs_pa = kcalloc(tdx_info->nr_tdcs_pages, sizeof(*kvm_tdx->tdcs_pa),
++	kvm_tdx->num_l2_vms = td_params->num_l2_vms;
++	/*
++	 * Count the tdcs/tdvps pages according to the number of L2
++	 * VMs.
++	 */
++	kvm_tdx->nr_tdcs_pages = tdx_info->nr_tdcs_pages +
++				 kvm_tdx->num_l2_vms * tdx_info->nr_tdcs_pages_per_l2_vm;
++	kvm_tdx->nr_tdvpx_pages = tdx_info->nr_tdvpx_pages +
++				  kvm_tdx->num_l2_vms * tdx_info->nr_tdvpx_pages_per_l2_vm;
++
++	tdcs_pa = kcalloc(kvm_tdx->nr_tdcs_pages, sizeof(*kvm_tdx->tdcs_pa),
+ 			  GFP_KERNEL_ACCOUNT | __GFP_ZERO);
+ 	if (!tdcs_pa)
+ 		goto free_tdr;
+-	for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
++	for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
+ 		va = __get_free_page(GFP_KERNEL_ACCOUNT);
+ 		if (!va)
+ 			goto free_tdcs;
+@@ -2634,7 +2652,7 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
+ 	}
+ 
+ 	kvm_tdx->tdcs_pa = tdcs_pa;
+-	for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
++	for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
+ 		err = tdh_mng_addcx(kvm_tdx->tdr_pa, tdcs_pa[i]);
+ 		if (err == TDX_RND_NO_ENTROPY) {
+ 			/* Here it's hard to allow userspace to retry. */
+@@ -2676,7 +2694,7 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
+ 	 * with partial initialization.
+ 	 */
+ teardown:
+-	for (; i < tdx_info->nr_tdcs_pages; i++) {
++	for (; i < kvm_tdx->nr_tdcs_pages; i++) {
+ 		if (tdcs_pa[i]) {
+ 			free_page((unsigned long)__va(tdcs_pa[i]));
+ 			tdcs_pa[i] = 0;
+@@ -2692,7 +2710,7 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
+ 	cpus_read_unlock();
+ 	free_cpumask_var(packages);
+ free_tdcs:
+-	for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
++	for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
+ 		if (tdcs_pa[i])
+ 			free_page((unsigned long)__va(tdcs_pa[i]));
+ 	}
+@@ -2969,13 +2987,13 @@ static int tdx_td_vcpu_init(struct kvm_vcpu *vcpu, u64 vcpu_rcx)
+ 		return -ENOMEM;
+ 	tdvpr_pa = __pa(va);
+ 
+-	tdvpx_pa = kcalloc(tdx_info->nr_tdvpx_pages, sizeof(*tdx->tdvpx_pa),
++	tdvpx_pa = kcalloc(kvm_tdx->nr_tdvpx_pages, sizeof(*tdx->tdvpx_pa),
+ 			   GFP_KERNEL_ACCOUNT);
+ 	if (!tdvpx_pa) {
+ 		ret = -ENOMEM;
+ 		goto free_tdvpr;
+ 	}
+-	for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
++	for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
+ 		va = __get_free_page(GFP_KERNEL_ACCOUNT);
+ 		if (!va) {
+ 			ret = -ENOMEM;
+@@ -2993,11 +3011,11 @@ static int tdx_td_vcpu_init(struct kvm_vcpu *vcpu, u64 vcpu_rcx)
+ 	tdx->tdvpr_pa = tdvpr_pa;
+ 
+ 	tdx->tdvpx_pa = tdvpx_pa;
+-	for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
++	for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
+ 		err = tdh_vp_addcx(tdx->tdvpr_pa, tdvpx_pa[i]);
+ 		if (KVM_BUG_ON(err, vcpu->kvm)) {
+ 			pr_tdx_error(TDH_VP_ADDCX, err, NULL);
+-			for (; i < tdx_info->nr_tdvpx_pages; i++) {
++			for (; i < kvm_tdx->nr_tdvpx_pages; i++) {
+ 				free_page((unsigned long)__va(tdvpx_pa[i]));
+ 				tdvpx_pa[i] = 0;
+ 			}
+@@ -3019,7 +3037,7 @@ static int tdx_td_vcpu_init(struct kvm_vcpu *vcpu, u64 vcpu_rcx)
+ 	return 0;
+ 
+ free_tdvpx:
+-	for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
++	for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
+ 		if (tdvpx_pa[i])
+ 			free_page((unsigned long)__va(tdvpx_pa[i]));
+ 		tdvpx_pa[i] = 0;
+diff --git a/arch/x86/kvm/vmx/tdx.h b/arch/x86/kvm/vmx/tdx.h
+index af3a2b8afee8..d333fc496e4c 100644
+--- a/arch/x86/kvm/vmx/tdx.h
++++ b/arch/x86/kvm/vmx/tdx.h
+@@ -41,6 +41,13 @@ struct kvm_tdx {
+ 	/* For KVM_MEMORY_MAPPING */
+ 	struct mutex source_lock;
+ 	struct page *source_page;
++
++	/* Number of TD partitioning guests can be created by this TD */
++	u8 num_l2_vms;
++
++	/* The actual page number of tdcs/tdvpx */
++	u8 nr_tdcs_pages;
++	u8 nr_tdvpx_pages;
+ };
+ 
+ union tdx_exit_reason {
+diff --git a/arch/x86/kvm/vmx/tdx_arch.h b/arch/x86/kvm/vmx/tdx_arch.h
+index 4e75d336df75..c34e7ac96b6c 100644
+--- a/arch/x86/kvm/vmx/tdx_arch.h
++++ b/arch/x86/kvm/vmx/tdx_arch.h
+@@ -136,7 +136,8 @@ struct td_params {
+ 	u64 attributes;
+ 	u64 xfam;
+ 	u16 max_vcpus;
+-	u8 reserved0[6];
++	u8 num_l2_vms;
++	u8 reserved0[5];
+ 
+ 	u64 eptp_controls;
+ 	u64 exec_controls;
+-- 
+2.34.1
+

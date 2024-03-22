@@ -1,0 +1,75 @@
+From e6850d919f5b40857c808960d9e7e36323e97e2a Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Thu, 14 Mar 2024 14:16:13 +0800
+Subject: [PATCH 11/25] KVM: TDX: Handle the extend vmexit type ATTR.WR
+
+When the TDX module processes a TDG.MEM.PAGE.ATTR.WR request, it may
+trigger an exit to the host VMM with the exit type ATTR.WR, which occurs
+when the L1 SEPT has not yet been mapped or needs an demotion, resulting
+in an EPT_VIOLATION vmexit. The host VMM is responsible for handling
+this situation to ensure that the GPA is appropriately mapped or demoted
+in the L1 SEPT.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c      | 19 +++++++++++++++++--
+ arch/x86/kvm/vmx/tdx_arch.h |  2 +-
+ 2 files changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index 9812fcb6ddb2..c1a02fb82e55 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -212,6 +212,20 @@ static inline bool is_td_finalized(struct kvm_tdx *kvm_tdx)
+ 	return kvm_tdx->finalized;
+ }
+ 
++
++static inline bool is_eeq_type_supported(enum tdx_ext_exit_qualification_type type)
++{
++	switch (type) {
++	case EXT_EXIT_QUAL_NONE:
++	case EXT_EXIT_QUAL_ACCEPT:
++	case EXT_EXIT_QUAL_GPA_DETAILS:
++	case EXT_EXIT_ATTR_WR:
++		return true;
++	}
++
++	return false;
++}
++
+ static inline bool is_valid_tdp_vm_id(struct kvm *kvm, enum tdp_vm_id vm_id)
+ {
+ 	return (vm_id <= to_kvm_tdx(kvm)->num_l2_vms) ? is_tdp_vm_id(vm_id) : false;
+@@ -2123,12 +2137,13 @@ static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
+ 
+ 	ext_exit_qual.full = tdexit_ext_exit_qual(vcpu);
+ 
+-	if (ext_exit_qual.type >= NUM_EXT_EXIT_QUAL) {
++	if (!is_eeq_type_supported(ext_exit_qual.type)) {
+ 		pr_err("EPT violation at gpa 0x%lx, with invalid ext exit qualification type 0x%x\n",
+ 			tdexit_gpa(vcpu), ext_exit_qual.type);
+ 		kvm_vm_bugged(vcpu->kvm);
+ 		return 0;
+-	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_ACCEPT) {
++	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_ACCEPT ||
++		   ext_exit_qual.type == EXT_EXIT_ATTR_WR) {
+ 		err_page_level = tdx_sept_level_to_pg_level(ext_exit_qual.req_sept_level);
+ 	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_GPA_DETAILS) {
+ 		enum tdp_vm_id vm_id = ext_exit_qual.vm_id;
+diff --git a/arch/x86/kvm/vmx/tdx_arch.h b/arch/x86/kvm/vmx/tdx_arch.h
+index 1c70749820a3..d3bcf6287620 100644
+--- a/arch/x86/kvm/vmx/tdx_arch.h
++++ b/arch/x86/kvm/vmx/tdx_arch.h
+@@ -256,7 +256,7 @@ enum tdx_ext_exit_qualification_type {
+ 	EXT_EXIT_QUAL_NONE = 0,
+ 	EXT_EXIT_QUAL_ACCEPT = 1,
+ 	EXT_EXIT_QUAL_GPA_DETAILS = 2,
+-	NUM_EXT_EXIT_QUAL,
++	EXT_EXIT_ATTR_WR = 5,
+ };
+ 
+ /*
+-- 
+2.34.1
+

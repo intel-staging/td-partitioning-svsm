@@ -1,0 +1,164 @@
+From 977b9ae48ee5effd7e545a1455d8994596d1dda9 Mon Sep 17 00:00:00 2001
+From: Vijay Dhanraj <vijay.dhanraj@intel.com>
+Date: Sun, 3 Mar 2024 17:26:45 -0800
+Subject: [PATCH 19/25] KVM: TDX: Setup shared page between SVSM and KVM host
+
+This commit sets up 4K shared page between SVSM and KVM host
+to pass irq events. The first 80 bytes of the shared page
+is used to store header information like the PIR that is
+needed to post interrupt to SVSM. Remaining bytes are treated
+as shared ring buffer space to copy irq event to SVSM.
+As part of this commit, a new TDVMCALL is introduced to receive
+shared page info from SVSM.
+
+Signed-off-by: Vijay Dhanraj <vijay.dhanraj@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c      | 68 +++++++++++++++++++++++++++++++++++++
+ arch/x86/kvm/vmx/tdx.h      | 23 +++++++++++++
+ arch/x86/kvm/vmx/tdx_arch.h |  3 ++
+ 3 files changed, 94 insertions(+)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index 4ec040256731..43793d32d2c2 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -1569,6 +1569,72 @@ static int tdx_get_td_vm_call_info(struct kvm_vcpu *vcpu)
+ 	return 1;
+ }
+ 
++static int tdx_handle_shared_irte_header(struct kvm_vcpu *vcpu)
++{
++	gfn_t gfn;
++	gpa_t gpa = tdvmcall_a0_read(vcpu);
++	struct page *page;
++	int npages_pinned;
++	unsigned long guest_addr;
++	void *shared_page_vaddr;
++	struct sirte_header sirte_hdr;
++	struct vcpu_tdx *tdx_vcpu = to_tdx(vcpu);
++
++	/* shared irte info already initialized, return success */
++	if (tdx_vcpu->pinned_page) {
++		tdvmcall_set_return_code(vcpu, TDVMCALL_SUCCESS);
++		return 1;
++	}
++
++	gfn = gpa_to_gfn(gpa) & ~kvm_gfn_shared_mask(vcpu->kvm);
++	if (!gfn) {
++		pr_err("%s: gpa to gfn failed! gfn 0x%llx gpa 0x%llx\n",
++		       __func__, gfn, gpa);
++		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
++		return 1;
++	}
++
++	if (kvm_mem_is_private(vcpu->kvm, gfn)) {
++		pr_err("%s: private gfn 0x%llx gpa 0x%llx\n", __func__, gfn,
++		       gpa);
++		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
++		return 1;
++	}
++
++	page = kzalloc(sizeof(*page), GFP_KERNEL);
++	if (!page) {
++		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
++		return 1;
++	}
++
++	guest_addr = kvm_vcpu_gfn_to_hva(vcpu, gfn);
++	npages_pinned = pin_user_pages_fast(guest_addr, 1,
++					    FOLL_WRITE | FOLL_NOFAULT | FOLL_LONGTERM,
++					    &page);
++	if (npages_pinned != 1) {
++		pr_err("%s: Failed to pin shared irte page, npage_pinned = %d",
++		       __func__, npages_pinned);
++		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
++		return 1;
++	}
++	tdx_vcpu->pinned_page = page;
++
++	shared_page_vaddr = page_address(page);
++	if (!shared_page_vaddr) {
++		pr_err("%s: invalid shared_irte_hva\n", __func__);
++		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
++		return 1;
++	}
++
++	/* Copy the first entry from the shared page to get the L1 PIR */
++	memcpy((void *)&sirte_hdr, shared_page_vaddr,
++	       sizeof(struct sirte_header));
++	tdx_vcpu->shared_irte_pir = sirte_hdr.pir;
++
++	tdvmcall_set_return_code(vcpu, TDVMCALL_SUCCESS);
++	return 1;
++}
++
+ static int handle_tdvmcall(struct kvm_vcpu *vcpu)
+ {
+ 	if (tdvmcall_exit_type(vcpu))
+@@ -1605,6 +1671,8 @@ static int handle_tdvmcall(struct kvm_vcpu *vcpu)
+ 		return tdx_emulate_wrmsr(vcpu);
+ 	case TDVMCALL_GET_TD_VM_CALL_INFO:
+ 		return tdx_get_td_vm_call_info(vcpu);
++	case TDG_VP_VMCALL_SHARED_IRTE_HDR:
++		return tdx_handle_shared_irte_header(vcpu);
+ 	default:
+ 		break;
+ 	}
+diff --git a/arch/x86/kvm/vmx/tdx.h b/arch/x86/kvm/vmx/tdx.h
+index 1a3937ca6e17..80134d1bb491 100644
+--- a/arch/x86/kvm/vmx/tdx.h
++++ b/arch/x86/kvm/vmx/tdx.h
+@@ -91,6 +91,25 @@ union tdx_exit_reason {
+ 	u64 full;
+ };
+ 
++struct meta_data {
++	u32 num_elem;	/* number of elements */
++	u32 elem_size;	/* sizeof of elements */
++	u32 head;	/* offset from base, to read */
++	u32 tail;	/* offset from base, to write */
++	u32 size;	/* ele_num * ele_size */
++	u32 padding[3];
++};
++
++struct sirte_header {
++	u8 pir;		/* PIR from L1 used by host to inject irq event */
++	u8 rsvd[15];
++	struct meta_data mdata;
++};
++
++struct sirte_page {
++	struct sirte_header sirte_hdr;
++} __aligned(4096);
++
+ struct vcpu_tdx {
+ 	struct kvm_vcpu	vcpu;
+ 
+@@ -137,6 +156,10 @@ struct vcpu_tdx {
+ 	struct lbr_desc lbr_desc;
+ 
+ 	bool resume_l1;
++
++	/* Shared page to pass irq event to L1 */
++	struct page *pinned_page;
++	u8 shared_irte_pir;
+ };
+ 
+ static inline bool is_td(struct kvm *kvm)
+diff --git a/arch/x86/kvm/vmx/tdx_arch.h b/arch/x86/kvm/vmx/tdx_arch.h
+index 84e68bf12564..16d23c219a48 100644
+--- a/arch/x86/kvm/vmx/tdx_arch.h
++++ b/arch/x86/kvm/vmx/tdx_arch.h
+@@ -47,6 +47,9 @@
+ 
+ #define TD_EXIT_OTHER_SMI_IS_MSMI	BIT(1)
+ 
++/* Not defined in GHCI */
++#define TDG_VP_VMCALL_SHARED_IRTE_HDR			0x20001
++
+ /* TDX control structure (TDR/TDCS/TDVPS) field access codes */
+ #define TDX_NON_ARCH			BIT_ULL(63)
+ #define TDX_CLASS_SHIFT			56
+-- 
+2.34.1
+

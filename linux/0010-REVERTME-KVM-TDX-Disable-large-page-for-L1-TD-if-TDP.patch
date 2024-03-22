@@ -1,0 +1,47 @@
+From 321eed1a310b50f352aeb74c1fefa51450b37541 Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Sat, 9 Mar 2024 18:06:16 +0800
+Subject: [PATCH 10/25] REVERTME: KVM: TDX: Disable large page for L1 TD if TDP
+ is enabled
+
+Both host and L1 VMM currently doesn't support large page mapping for L2
+VMs. Force disabling large page for a TD if it can support L2 VMs.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c | 19 ++++++++++++++-----
+ 1 file changed, 14 insertions(+), 5 deletions(-)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index 0bb52ac85d54..9812fcb6ddb2 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -3380,11 +3380,20 @@ int tdx_gmem_max_level(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn,
+ 	if (!is_private)
+ 		return 0;
+ 
+-	/*
+-	 * TDH.MEM.PAGE.AUG supports up to 2MB page.
+-	 * TODO: Enable 1gb large page support.
+-	 */
+-	*max_level = min(*max_level, PG_LEVEL_2M);
++	if (to_kvm_tdx(kvm)->num_l2_vms)
++		/*
++		 * The large page is not supported yet for
++		 * host VMM and L1 VMM.
++		 * TODO: Enable large page support.
++		 */
++		*max_level = min(*max_level, PG_LEVEL_4K);
++	else
++		/*
++		 * TDH.MEM.PAGE.AUG supports up to 2MB page.
++		 * TODO: Enable 1gb large page support.
++		 */
++		*max_level = min(*max_level, PG_LEVEL_2M);
++
+ 	return 0;
+ }
+ 
+-- 
+2.34.1
+

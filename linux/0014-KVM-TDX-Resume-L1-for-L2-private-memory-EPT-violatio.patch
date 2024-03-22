@@ -1,0 +1,52 @@
+From 129b0c8347026359d16bac100861d4dc7fddcd8b Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Wed, 13 Mar 2024 17:35:56 +0800
+Subject: [PATCH 14/25] KVM: TDX: Resume L1 for L2 private memory EPT violation
+
+When L2 accesses a private page that isn't mapped in L1 TD's
+SEPT, it triggers an EPT violation for the host VMM, which
+can be handled by the TD ept violation handling process. A
+private page may not be set to TD's SEPT within one vmexit
+cycle if e.g., page fault stale is happened. We can enter L2
+to retry but this means the same L2 instruction will be
+intercepted again by EPT violation vmexit. If this retry
+process is repeated excessively, TDX module may identify it
+as a zero-step attack. So instead of entering L2 to intercept
+the same instruction again, resuming L1 to do the next level
+handling as eventually the private page can be mapped during L1
+adding page alias for L2.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ arch/x86/kvm/vmx/tdx.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/arch/x86/kvm/vmx/tdx.c b/arch/x86/kvm/vmx/tdx.c
+index a2139010e531..75053ba3bf2b 100644
+--- a/arch/x86/kvm/vmx/tdx.c
++++ b/arch/x86/kvm/vmx/tdx.c
+@@ -2181,6 +2181,21 @@ static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
+ 			to_tdx(vcpu)->resume_l1 = true;
+ 			return 1;
+ 		}
++		/*
++		 * When L2 accesses a private page that isn't mapped in L1 TD's
++		 * SEPT, it triggers an EPT violation for the host VMM, which
++		 * can be handled by the TD ept violation handling process. A
++		 * private page may not be set to TD's SEPT within one vmexit
++		 * cycle if e.g., page fault stale is happened. We can enter L2
++		 * to retry but this means the same L2 instruction will be
++		 * intercepted again by EPT violation vmexit. If this retry
++		 * process is repeated excessively, TDX module may identify it
++		 * as a zero-step attack. So instead of entering L2 to intercept
++		 * the same instruction again, resuming L1 to do the next level
++		 * handling as eventually the private page can be mapped during
++		 * L1 adding page alias for L2.
++		 */
++		to_tdx(vcpu)->resume_l1 = kvm_is_private_gpa(vcpu->kvm, tdexit_gpa(vcpu));
+ 	}
+ 
+ 	if (kvm_is_private_gpa(vcpu->kvm, tdexit_gpa(vcpu))) {
+-- 
+2.34.1
+
