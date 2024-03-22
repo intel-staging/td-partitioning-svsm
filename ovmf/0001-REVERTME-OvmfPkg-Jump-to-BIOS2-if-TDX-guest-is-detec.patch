@@ -1,0 +1,33 @@
+From 79d1fb3af6e3d3cbc14273a3655302f025ef0ad9 Mon Sep 17 00:00:00 2001
+From: Peter Fang <peter.fang@intel.com>
+Date: Tue, 24 Jan 2023 04:32:32 -0800
+Subject: [PATCH 1/5] [REVERTME] OvmfPkg: Jump to BIOS2 if TDX guest is
+ detected
+
+If vCPU indicates this is a TDX guest (CR0.PE is set), jump to a fixed
+address (4GB - 2MB - 16), where BIOS2's entry point is expected, right
+after GDT is initialized.
+
+TD BSP and TD APs share the same entry point, so this works for SMP boot
+as well.
+
+Signed-off-by: Peter Fang <peter.fang@intel.com>
+---
+ OvmfPkg/ResetVector/Ia32/IntelTdx.asm | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/OvmfPkg/ResetVector/Ia32/IntelTdx.asm b/OvmfPkg/ResetVector/Ia32/IntelTdx.asm
+index 06794baef8..b55f81042b 100644
+--- a/OvmfPkg/ResetVector/Ia32/IntelTdx.asm
++++ b/OvmfPkg/ResetVector/Ia32/IntelTdx.asm
+@@ -133,6 +133,7 @@ ReloadFlat32:
+     mov     eax, ADDR_OF(gdtr)
+     lgdt    [eax]
+ 
++    jmp     LINEAR_CODE_SEL:dword (0x100000000 - 0x200000 - 16)
+     jmp     LINEAR_CODE_SEL:dword ADDR_OF(jumpToFlat32BitAndLandHere)
+ 
+ jumpToFlat32BitAndLandHere:
+-- 
+2.40.0
+

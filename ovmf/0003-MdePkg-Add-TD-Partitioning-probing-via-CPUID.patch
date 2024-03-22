@@ -1,0 +1,145 @@
+From 36750ddb1b3eebe9ecd35b2f5c860b616d819e60 Mon Sep 17 00:00:00 2001
+From: Jason Chen CJ <jason.cj.chen@intel.com>
+Date: Thu, 2 Mar 2023 02:05:49 -0800
+Subject: [PATCH 3/5] MdePkg: Add TD Partitioning probing via CPUID
+
+Use the same mechanism as TDX (CPUID 0x21) to detect a TDP guest. TDP
+will also use an additional bit from subleaf 1 (returned EBX=1).
+
+Signed-off-by: Peter Fang <peter.fang@intel.com>
+Signed-off-by: Jason Chen CJ <jason.cj.chen@intel.com>
+---
+ MdePkg/Include/Library/BaseLib.h      | 11 +++++
+ MdePkg/Include/Register/Intel/Cpuid.h |  2 +
+ MdePkg/Library/BaseLib/IntelTdxNull.c | 14 +++++++
+ MdePkg/Library/BaseLib/X64/TdProbe.c  | 60 +++++++++++++++++++++++++++
+ 4 files changed, 87 insertions(+)
+
+diff --git a/MdePkg/Include/Library/BaseLib.h b/MdePkg/Include/Library/BaseLib.h
+index 1fff0fb224..bb0006d108 100644
+--- a/MdePkg/Include/Library/BaseLib.h
++++ b/MdePkg/Include/Library/BaseLib.h
+@@ -5219,6 +5219,17 @@ TdIsEnabled (
+   VOID
+   );
+ 
++/**
++  Probe if TD Partitioning is enabled.
++
++  @return TRUE    TD Partitioning is enabled.
++  @return FALSE   TD Partitioning is not enabled.
++**/
++BOOLEAN
++EFIAPI
++TdpIsEnabled (
++  );
++
+ #endif
+ 
+ #if defined (MDE_CPU_X64)
+diff --git a/MdePkg/Include/Register/Intel/Cpuid.h b/MdePkg/Include/Register/Intel/Cpuid.h
+index 1fb880c85c..3d0df30b61 100644
+--- a/MdePkg/Include/Register/Intel/Cpuid.h
++++ b/MdePkg/Include/Register/Intel/Cpuid.h
+@@ -3721,6 +3721,8 @@ typedef union {
+ #define CPUID_GUESTTD_SIGNATURE_GENUINE_INTEL_EBX  SIGNATURE_32 ('I', 'n', 't', 'e')
+ #define CPUID_GUESTTD_SIGNATURE_GENUINE_INTEL_ECX  SIGNATURE_32 (' ', ' ', ' ', ' ')
+ #define CPUID_GUESTTD_SIGNATURE_GENUINE_INTEL_EDX  SIGNATURE_32 ('l', 'T', 'D', 'X')
++
++#define CPUID_GUESTTDP_GENUINE_INTEL_EBX 1
+ ///
+ /// @}
+ ///
+diff --git a/MdePkg/Library/BaseLib/IntelTdxNull.c b/MdePkg/Library/BaseLib/IntelTdxNull.c
+index ec95470bd4..8b7a7e4c0a 100644
+--- a/MdePkg/Library/BaseLib/IntelTdxNull.c
++++ b/MdePkg/Library/BaseLib/IntelTdxNull.c
+@@ -81,3 +81,17 @@ TdIsEnabled (
+ {
+   return FALSE;
+ }
++
++/**
++  Probe if TD Partitioning is enabled.
++
++  @return TRUE    TD Partitioning is enabled.
++  @return FALSE   TD Partitioning is not enabled.
++**/
++BOOLEAN
++EFIAPI
++TdpIsEnabled (
++  )
++{
++  return FALSE;
++}
+diff --git a/MdePkg/Library/BaseLib/X64/TdProbe.c b/MdePkg/Library/BaseLib/X64/TdProbe.c
+index b893c0a004..c0cf3c5fa8 100644
+--- a/MdePkg/Library/BaseLib/X64/TdProbe.c
++++ b/MdePkg/Library/BaseLib/X64/TdProbe.c
+@@ -61,3 +61,63 @@ TdIsEnabled (
+ 
+   return TdEnabled;
+ }
++
++/**
++  Probe if TD Partitioning is enabled.
++
++  @return TRUE    TD Partitioning is enabled.
++  @return FALSE   TD Partitioning is not enabled.
++**/
++BOOLEAN
++EFIAPI
++TdpIsEnabled (
++  )
++{
++  UINT32                  Eax;
++  UINT32                  Ebx;
++  UINT32                  Ecx;
++  UINT32                  Edx;
++  UINT32                  LargestEax;
++  BOOLEAN                 TdpEnabled;
++  CPUID_VERSION_INFO_ECX  CpuIdVersionInfoEcx;
++
++  TdpEnabled = FALSE;
++
++  do {
++    AsmCpuid (CPUID_SIGNATURE, &LargestEax, &Ebx, &Ecx, &Edx);
++
++    if (  (Ebx != CPUID_SIGNATURE_GENUINE_INTEL_EBX)
++       || (Edx != CPUID_SIGNATURE_GENUINE_INTEL_EDX)
++       || (Ecx != CPUID_SIGNATURE_GENUINE_INTEL_ECX))
++    {
++      break;
++    }
++
++    AsmCpuid (CPUID_VERSION_INFO, NULL, NULL, &CpuIdVersionInfoEcx.Uint32, NULL);
++    if (CpuIdVersionInfoEcx.Bits.ParaVirtualized == 0) {
++      break;
++    }
++
++    if (LargestEax < CPUID_GUESTTD_RUNTIME_ENVIRONMENT) {
++      break;
++    }
++
++    AsmCpuidEx (CPUID_GUESTTD_RUNTIME_ENVIRONMENT, 0, &Eax, &Ebx, &Ecx, &Edx);
++    if (  (Ebx != CPUID_GUESTTD_SIGNATURE_GENUINE_INTEL_EBX)
++       || (Edx != CPUID_GUESTTD_SIGNATURE_GENUINE_INTEL_EDX)
++       || (Ecx != CPUID_GUESTTD_SIGNATURE_GENUINE_INTEL_ECX))
++    {
++      break;
++    }
++
++    AsmCpuidEx (CPUID_GUESTTD_RUNTIME_ENVIRONMENT, 1, &Eax, &Ebx, &Ecx, &Edx);
++    if (Ebx != CPUID_GUESTTDP_GENUINE_INTEL_EBX)
++    {
++      break;
++    }
++
++    TdpEnabled = TRUE;
++  } while (FALSE);
++
++  return TdpEnabled;
++}
+-- 
+2.40.0
+
