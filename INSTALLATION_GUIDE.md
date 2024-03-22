@@ -182,7 +182,7 @@ To download the tree:
     $ cd td-partitioning-svsm/
     $ git checkout -b svsm-tdp remotes/origin/svsm-tdp
 
-This svsm-tdp branch is not based on the latest coconut-svsm. The coconut-svsm base is tagged at https://github.com/intel-staging/td-partitioning-svsm/commits/coconut-svsm-base-20240221/ 
+This svsm-tdp branch is not based on the latest coconut-svsm. The coconut-svsm base is tagged at https://github.com/intel-staging/td-partitioning-svsm/commits/coconut-svsm-base-20240221/
 
 ## 2. Prerequisite Setup
 
@@ -202,22 +202,24 @@ To get a release version svsm.bin, build by:
 
 The svsm.bin will be generated in td-partitioning-svsm/svsm.bin
 
-# Setup TDP Guest Kernel Image And Rootfs Image
+# Setup TDP Guest Kernel, Initrd And Rootfs Image
 
-##1. In order to get the kernel image, initrd please download the CentOS stream 9 image from https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-20240311.0.x86_64.qcow2
+Download CentOS stream 9 cloud rootfs image from,
+https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-20240311.0.x86_64.qcow2
 
 From the downloaded image extract kernel, initrd using,
 
-    $ modprobe nbd max_part=10
-    $ qemu-nbd -c /dev/nbd0 /path/to/downloaded/CentOS9.qcow2
-    $ fdisk /dev/nbd0 -l
-    $ mount /dev/nbd0p1 /mnt
-    $ cp /mnt/boot/initramfs-5.14.0-427.el9.x86_64.img /path/to/launch_script/
-    $ cp /mnt/boot/vmlinuz-5.14.0-427.el9.x86_64 /path/to/launch_script/
-    $ umount /mnt
-    $ qemu-nbd -d /dev/nbd0
+    $ sudo modprobe nbd max_part=10
+    $ sudo qemu-nbd -c /dev/nbd0 /path/to/downloaded/CentOS9.qcow2
+    $ sudo fdisk /dev/nbd0 -l
+    $ sudo mount /dev/nbd0p1 /mnt
+    $ sudo cp /mnt/boot/initramfs-5.14.0-427.el9.x86_64.img /path/to/launch_script/
+    $ sudo cp /mnt/boot/vmlinuz-5.14.0-427.el9.x86_64 /path/to/launch_script/
+    $ sudo umount /mnt
+    $ sudo qemu-nbd -d /dev/nbd0
 
 # Sample TDP Guest launch script
+
 To launch a TDP guest on top of coconut-svsm, below are required:
 
     |qemu_system_x86| \\
@@ -229,37 +231,37 @@ To launch a TDP guest on top of coconut-svsm, below are required:
         -append "root=/dev/vda1 rw console=hvc0 earlyprintk=ttyS0 loglevel=8 ignore_loglevel nopvspin" \\
 
 
-Here is an reference script,
-#!/bin/bash
+Here is a reference script,
 
-MEMORY=4G
-CPU=8
+    #!/bin/bash
 
-QEMU=/path/to/qemu-system-x86_64 (refer to qemu section)
+    MEMORY=4G
+    CPU=8
 
-KERNEL=/path/to/kernel/bzImage   (see earlier section on Guest kernel, Image and rootfs)
-INITRD=/path/to/initrd           (see earlier section on Guest kernel, Image and rootfs)
-L2BIOS=/path/to/ovmf             (refer to ovmf section)
+    QEMU=/path/to/qemu-system-x86_64 (refer to qemu section)
+    KERNEL=/path/to/kernel/bzImage   (see earlier section on Guest kernel, Image and rootfs)
+    INITRD=/path/to/initrd           (see earlier section on Guest kernel, Image and rootfs)
+    L2BIOS=/path/to/ovmf             (refer to ovmf section)
+    BIOS=/path/to/svsm.bin           (refer to coconut-svsm section)
 
-BIOS=/path/to/svsm.bin           (refer to coconut-svsm section)
+    APPEND="root=/dev/vda1 rw console=hvc0 earlyprintk=ttyS0 loglevel=8 ignore_loglevel nopvspin"
 
-APPEND="root=/dev/vda1 rw console=hvc0 earlyprintk=ttyS0 loglevel=8 ignore_loglevel nopvspin"
-
-sudo $QEMU -m $MEMORY \
-        -name svsm-tdp,debug-threads=on \
-        -nographic \
-        -smp ${CPU} \
-        -nodefaults \
-        -cpu host \
-        -bios ${BIOS} \
-        -initrd ${INITRD} \
-        -kernel $KERNEL \
-        -object iothread,id=iothread0 -drive if=none,cache=none,file=${L2_ROOT_DISK},id=drive0 -device virtio-blk-pci,drive=drive0,iommu_platform=true,disable-legacy=on,iothread=iothread0 \
-        -netdev user,id=unet,hostfwd=tcp::2224-:22 -device virtio-net-pci,netdev=unet \
-        -machine q35,accel=kvm,kernel-irqchip=split,hpet=off,pic=off,pit=off,sata=off,l2bios=${L2BIOS},confidential-guest-support=tdx0 \
-        -object tdx-guest,id=tdx0,num-l2-vms=1,svsm=on \
-        -append "${APPEND}" \
-        -chardev stdio,id=mux,mux=on \
-        -device virtio-serial,romfile= \
-        -device virtconsole,chardev=mux \
-        -serial chardev:mux \
+    sudo $QEMU -m $MEMORY \
+            -name svsm-tdp,debug-threads=on \
+            -nographic \
+            -smp ${CPU} \
+            -nodefaults \
+            -cpu host \
+            -bios ${BIOS} \
+            -initrd ${INITRD} \
+            -kernel $KERNEL \
+            -object iothread,id=iothread0 -drive if=none,cache=none,file=${L2_ROOT_DISK},id=drive0 \
+            -device virtio-blk-pci,drive=drive0,iommu_platform=true,disable-legacy=on,iothread=iothread0 \
+            -netdev user,id=unet,hostfwd=tcp::2224-:22 -device virtio-net-pci,netdev=unet \
+            -machine q35,accel=kvm,kernel-irqchip=split,hpet=off,pic=off,pit=off,sata=off,l2bios=${L2BIOS},confidential-guest-support=tdx0 \
+            -object tdx-guest,id=tdx0,num-l2-vms=1,svsm=on \
+            -append "${APPEND}" \
+            -chardev stdio,id=mux,mux=on \
+            -device virtio-serial,romfile= \
+            -device virtconsole,chardev=mux \
+            -serial chardev:mux \
