@@ -1,0 +1,253 @@
+From d23828ab2889552ebdc877cbef862f70348d7d6e Mon Sep 17 00:00:00 2001
+From: Peter Fang <peter.fang@intel.com>
+Date: Mon, 25 Sep 2023 01:59:11 -0700
+Subject: [PATCH 6/9] i386/tdx: create SVSM memslot
+
+Set up a designated SVSM memslot for stage2 bootloader to load the SVSM
+kernel. The RAM for this memslot is stolen from the guest's system
+memory.
+
+To enable this, "svsm=on" must be added to the QEMU parameters.
+"svsmbase" has a default value of 512G and "svsmsize" has a default
+value of 256M.
+
+Signed-off-by: Peter Fang <peter.fang@intel.com>
+Signed-off-by: Vijay Dhanraj <vijay.dhanraj@intel.com>
+---
+ hw/i386/pc.c          |   6 ++-
+ qapi/qom.json         |  11 +++-
+ target/i386/kvm/tdx.c | 116 ++++++++++++++++++++++++++++++++++++++++++
+ target/i386/kvm/tdx.h |   6 +++
+ 4 files changed, 136 insertions(+), 3 deletions(-)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 4913d755c1..0bee8190bb 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -898,11 +898,13 @@ void pc_memory_init(PCMachineState *pcms,
+     hwaddr cxl_base, cxl_resv_end = 0;
+     X86CPU *cpu = X86_CPU(first_cpu);
+ 
++    linux_boot = (machine->kernel_filename != NULL);
++
++    tdx_mem_init(machine);
++
+     assert(machine->ram_size == x86ms->below_4g_mem_size +
+                                 x86ms->above_4g_mem_size);
+ 
+-    linux_boot = (machine->kernel_filename != NULL);
+-
+     /*
+      * The HyperTransport range close to the 1T boundary is unique to AMD
+      * hosts with IOMMUs enabled. Restrict the ram-above-4g relocation
+diff --git a/qapi/qom.json b/qapi/qom.json
+index 4559fbc371..efb0ce6764 100644
+--- a/qapi/qom.json
++++ b/qapi/qom.json
+@@ -925,6 +925,12 @@
+ # @num-l2-vms: command-line option to specify number of L2 VMs that
+ #     will be supported by the TD guest.
+ #
++# @svsm: whether SVSM is used as L1 TD
++#
++# @svsmbase: SVSM's starting GPA
++#
++# @svsmsize: size of SVSM
++#
+ # Since: 9.0
+ ##
+ { 'struct': 'TdxGuestProperties',
+@@ -933,7 +939,10 @@
+             '*mrowner': 'str',
+             '*mrownerconfig': 'str',
+             '*quote-generation-socket': 'SocketAddress',
+-            '*num-l2-vms': 'uint8' } }
++            '*num-l2-vms': 'uint8',
++            '*svsm': 'bool',
++            '*svsmbase': 'uint64',
++            '*svsmsize': 'uint64' } }
+ 
+ ##
+ # @ThreadContextProperties:
+diff --git a/target/i386/kvm/tdx.c b/target/i386/kvm/tdx.c
+index 1d60682476..3b786084e0 100644
+--- a/target/i386/kvm/tdx.c
++++ b/target/i386/kvm/tdx.c
+@@ -624,13 +624,60 @@ static void tdx_post_init_vcpus(void)
+     }
+ }
+ 
++void tdx_mem_init(MachineState *ms)
++{
++    X86MachineState *x86ms = X86_MACHINE(ms);
++    TdxGuest *tdx;
++    MemoryRegion *svsm;
++    uint64_t svsm_base, svsm_size;
++
++    if (!is_tdx_vm()) {
++        return;
++    }
++
++    tdx = TDX_GUEST(ms->cgs);
++
++    /* Check whether SVSM was enabled */
++    if (!tdx->svsm_enabled) {
++        return;
++    }
++
++    /* First reserve some RAM for the SVSM */
++    svsm_base = tdx->svsm_base;
++    svsm_size = tdx->svsm_size;
++
++    if (svsm_size <= x86ms->above_4g_mem_size) {
++        x86ms->above_4g_mem_size -= svsm_size;
++        ms->ram_size -= svsm_size;
++    } else if (svsm_size < x86ms->below_4g_mem_size) {
++        x86ms->below_4g_mem_size -= svsm_size;
++        ms->ram_size -= svsm_size;
++    } else {
++        error_report("memory too small for SVSM");
++        exit(EXIT_FAILURE);
++    }
++
++    svsm = g_malloc(sizeof(*svsm));
++    memory_region_init_alias(svsm, NULL, "svsm.ram", ms->ram, ms->ram_size, svsm_size);
++    memory_region_add_subregion(get_system_memory(), svsm_base, svsm);
++
++    printf("Adding SVSM memory 0x%lx-0x%lx\n", svsm_base, svsm_base + svsm_size);
++}
++
+ static void tdx_finalize_vm(Notifier *notifier, void *unused)
+ {
++    MachineState *ms = MACHINE(qdev_get_machine());
++    TdxGuest *tdx = TDX_GUEST(ms->cgs);
+     TdxFirmware *tdvf = &tdx_guest->tdvf;
+     TdxFirmwareEntry *entry;
+     RAMBlock *ram_block;
+     int r;
+ 
++    if (tdx->svsm_enabled ^ tdvf->svsm_found) {
++        error_report("SVSM image must be used with \"svsm=on\"");
++        exit(1);
++    }
++
+     tdx_init_ram_entries();
+ 
+     for_each_tdx_fw_entry(tdvf, entry) {
+@@ -1360,6 +1407,58 @@ static void tdx_guest_set_quote_generation(Object *obj, Visitor *v,
+     tdx->quote_generator = quote_generator;
+ }
+ 
++static bool
++tdx_guest_get_svsm_en(Object *obj, Error **errp)
++{
++    TdxGuest *tdx_guest = TDX_GUEST(obj);
++
++    return !!tdx_guest->svsm_enabled;
++}
++
++static void
++tdx_guest_set_svsm_en(Object *obj, bool value, Error **errp)
++{
++    TdxGuest *tdx_guest = TDX_GUEST(obj);
++
++    tdx_guest->svsm_enabled = value;
++}
++
++static void
++tdx_guest_get_svsm_base(Object *obj, Visitor *v, const char *name,
++                        void *opaque, Error **errp)
++{
++    visit_type_uint64(v, name,
++                      (uint64_t *)&TDX_GUEST(obj)->svsm_base,
++                      errp);
++}
++
++static void
++tdx_guest_set_svsm_base(Object *obj, Visitor *v, const char *name,
++                        void *opaque, Error **errp)
++{
++    visit_type_uint64(v, name,
++                      (uint64_t *)&TDX_GUEST(obj)->svsm_base,
++                      errp);
++}
++
++static void
++tdx_guest_get_svsm_size(Object *obj, Visitor *v, const char *name,
++                        void *opaque, Error **errp)
++{
++    visit_type_uint64(v, name,
++                      (uint64_t *)&TDX_GUEST(obj)->svsm_size,
++                      errp);
++}
++
++static void
++tdx_guest_set_svsm_size(Object *obj, Visitor *v, const char *name,
++                        void *opaque, Error **errp)
++{
++    visit_type_uint64(v, name,
++                      (uint64_t *)&TDX_GUEST(obj)->svsm_size,
++                      errp);
++}
++
+ /* tdx guest */
+ OBJECT_DEFINE_TYPE_WITH_INTERFACES(TdxGuest,
+                                    tdx_guest,
+@@ -1368,6 +1467,9 @@ OBJECT_DEFINE_TYPE_WITH_INTERFACES(TdxGuest,
+                                    { TYPE_USER_CREATABLE },
+                                    { NULL })
+ 
++#define TDX_SVSM_DEFAULT_BASE   (512 * (1ULL << 30))    /* 512G */
++#define TDX_SVSM_DEFAULT_SIZE   (256 * (1ULL << 20))    /* 256 MB */
++
+ static void tdx_guest_init(Object *obj)
+ {
+     TdxGuest *tdx = TDX_GUEST(obj);
+@@ -1397,6 +1499,20 @@ static void tdx_guest_init(Object *obj)
+     tdx->event_notify_vector = -1;
+     tdx->event_notify_apicid = -1;
+ 
++    object_property_add_bool(obj, "svsm",
++                             tdx_guest_get_svsm_en,
++                             tdx_guest_set_svsm_en);
++    object_property_add(obj, "svsmbase", "uint64",
++                        tdx_guest_get_svsm_base,
++                        tdx_guest_set_svsm_base, NULL, NULL);
++    object_property_add(obj, "svsmsize", "uint64",
++                        tdx_guest_get_svsm_size,
++                        tdx_guest_set_svsm_size, NULL, NULL);
++
++    tdx->svsm_enabled = false;
++    tdx->svsm_base = TDX_SVSM_DEFAULT_BASE;
++    tdx->svsm_size = TDX_SVSM_DEFAULT_SIZE;
++
+     object_property_add_uint8_ptr(obj, "num-l2-vms", &tdx->num_l2_vms,
+                                   OBJ_PROP_FLAG_READWRITE);
+ }
+diff --git a/target/i386/kvm/tdx.h b/target/i386/kvm/tdx.h
+index 1de7b87225..4f1b7ae5da 100644
+--- a/target/i386/kvm/tdx.h
++++ b/target/i386/kvm/tdx.h
+@@ -64,6 +64,11 @@ typedef struct TdxGuest {
+     /* GetQuote */
+     TdxQuoteGenerator *quote_generator;
+ 
++    /* SVSM location in guest physical address space */
++    bool svsm_enabled;
++    uint64_t svsm_base;
++    uint64_t svsm_size;
++
+     uint8_t num_l2_vms;
+     MemoryRegion *bios2_region;
+ } TdxGuest;
+@@ -74,6 +79,7 @@ bool is_tdx_vm(void);
+ #define is_tdx_vm() 0
+ #endif /* CONFIG_TDX */
+ 
++void tdx_mem_init(MachineState *ms);
+ void tdx_get_supported_cpuid(uint32_t function, uint32_t index, int reg,
+                              uint32_t *ret);
+ int tdx_pre_create_vcpu(CPUState *cpu, Error **errp);
+-- 
+2.40.0
+

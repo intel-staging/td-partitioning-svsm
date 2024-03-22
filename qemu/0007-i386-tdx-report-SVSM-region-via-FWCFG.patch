@@ -1,0 +1,90 @@
+From d88a02093c86814335e6fa6c407f5595ce7d75a7 Mon Sep 17 00:00:00 2001
+From: Peter Fang <peter.fang@intel.com>
+Date: Mon, 25 Sep 2023 02:10:40 -0700
+Subject: [PATCH 7/9] i386/tdx: report SVSM region via FWCFG
+
+Add a FWCFG file, etc/tdx/svsm, for the guest to query the SVSM region.
+
+This is to mimic SEV's solution, which uses etc/sev/svsm for the same
+purpose.
+
+Signed-off-by: Peter Fang <peter.fang@intel.com>
+---
+ hw/i386/pc.c          |  2 ++
+ target/i386/kvm/tdx.c | 26 ++++++++++++++++++++++++++
+ target/i386/kvm/tdx.h |  2 ++
+ 3 files changed, 30 insertions(+)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 0bee8190bb..1af0fa064c 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1079,6 +1079,8 @@ void pc_memory_init(PCMachineState *pcms,
+ 
+     /* Init ACPI memory hotplug IO base address */
+     pcms->memhp_io_base = ACPI_MEMORY_HOTPLUG_BASE;
++
++    tdx_init_fw_cfg(machine);
+ }
+ 
+ /*
+diff --git a/target/i386/kvm/tdx.c b/target/i386/kvm/tdx.c
+index 3b786084e0..3962623790 100644
+--- a/target/i386/kvm/tdx.c
++++ b/target/i386/kvm/tdx.c
+@@ -31,6 +31,7 @@
+ #include "hw/i386/tdvf.h"
+ #include "hw/i386/tdvf-hob.h"
+ #include "hw/pci/msi.h"
++#include "hw/nvram/fw_cfg.h"
+ #include "kvm_i386.h"
+ #include "tdx.h"
+ #include "tdx-quote-generator.h"
+@@ -664,6 +665,31 @@ void tdx_mem_init(MachineState *ms)
+     printf("Adding SVSM memory 0x%lx-0x%lx\n", svsm_base, svsm_base + svsm_size);
+ }
+ 
++void tdx_init_fw_cfg(MachineState *ms)
++{
++    X86MachineState *x86ms = X86_MACHINE(ms);
++    TdxGuest *tdx;
++    struct content {
++        uint64_t base;
++        uint64_t size;
++    } data;
++
++    if (!is_tdx_vm()) {
++        return;
++    }
++
++    tdx = TDX_GUEST(ms->cgs);
++
++    if (!tdx->svsm_enabled) {
++        return;
++    }
++
++    data.base = cpu_to_le64(tdx->svsm_base);
++    data.size = cpu_to_le64(tdx->svsm_size);
++
++    fw_cfg_add_file(x86ms->fw_cfg, "etc/tdx/svsm", g_memdup(&data, sizeof(data)), sizeof(data));
++}
++
+ static void tdx_finalize_vm(Notifier *notifier, void *unused)
+ {
+     MachineState *ms = MACHINE(qdev_get_machine());
+diff --git a/target/i386/kvm/tdx.h b/target/i386/kvm/tdx.h
+index 4f1b7ae5da..7ab8a84596 100644
+--- a/target/i386/kvm/tdx.h
++++ b/target/i386/kvm/tdx.h
+@@ -80,6 +80,8 @@ bool is_tdx_vm(void);
+ #endif /* CONFIG_TDX */
+ 
+ void tdx_mem_init(MachineState *ms);
++void tdx_init_fw_cfg(MachineState *ms);
++
+ void tdx_get_supported_cpuid(uint32_t function, uint32_t index, int reg,
+                              uint32_t *ret);
+ int tdx_pre_create_vcpu(CPUState *cpu, Error **errp);
+-- 
+2.40.0
+

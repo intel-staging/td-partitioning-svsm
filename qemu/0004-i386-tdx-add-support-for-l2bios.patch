@@ -1,0 +1,268 @@
+From 21a29c90c9160b02da5c6962b60ddcbab35a5fd7 Mon Sep 17 00:00:00 2001
+From: Peter Fang <peter.fang@intel.com>
+Date: Tue, 21 Mar 2023 19:35:19 +0800
+Subject: [PATCH 4/9] i386/tdx: add support for l2bios
+
+The "l2bios" machine option indicates that two BIOS images should be
+loaded into guest memory: one for L1 BIOS, and the other for L2 BIOS.
+
+Only 2MB BIOS images are supported at the moment:
+
+- L1 BIOS (bios):   (4GB-4MB) - (4GB-2MB)
+- L2 BIOS (l2bios): (4GB-2MB) - 4GB
+
+Signed-off-by: Peter Fang <peter.fang@intel.com>
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Signed-off-by: Vijay Dhanraj <vijay.dhanraj@intel.com>
+---
+ hw/i386/microvm.c     |  2 +-
+ hw/i386/pc.c          | 19 +++++++++++++++++++
+ hw/i386/pc_sysfw.c    |  4 ++--
+ hw/i386/x86.c         | 41 +++++++++++++++++++++++++++++++++++------
+ include/hw/i386/pc.h  |  1 +
+ include/hw/i386/x86.h |  3 ++-
+ target/i386/kvm/tdx.c | 26 ++++++++++++++++++++++++++
+ target/i386/kvm/tdx.h |  2 ++
+ 8 files changed, 88 insertions(+), 10 deletions(-)
+
+diff --git a/hw/i386/microvm.c b/hw/i386/microvm.c
+index 61a772dfe6..b646998f3f 100644
+--- a/hw/i386/microvm.c
++++ b/hw/i386/microvm.c
+@@ -278,7 +278,7 @@ static void microvm_devices_init(MicrovmMachineState *mms)
+     default_firmware = x86_machine_is_acpi_enabled(x86ms)
+             ? MICROVM_BIOS_FILENAME
+             : MICROVM_QBOOT_FILENAME;
+-    x86_bios_rom_init(MACHINE(mms), default_firmware, get_system_memory(), true);
++    x86_bios_rom_init(MACHINE(mms), default_firmware, NULL, get_system_memory(), true);
+ }
+ 
+ static void microvm_memory_init(MicrovmMachineState *mms)
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 3f8dd218eb..4913d755c1 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1726,6 +1726,20 @@ static void pc_machine_set_max_fw_size(Object *obj, Visitor *v,
+     pcms->max_fw_size = value;
+ }
+ 
++static char *pc_machine_get_firmware(Object *obj, Error **errp)
++{
++    PCMachineState *pcms = PC_MACHINE(obj);
++
++    return g_strdup(pcms->firmware2);
++}
++
++static void pc_machine_set_firmware(Object *obj, const char *value, Error **errp)
++{
++    PCMachineState *pcms = PC_MACHINE(obj);
++
++    g_free(pcms->firmware2);
++    pcms->firmware2 = g_strdup(value);
++}
+ 
+ static void pc_machine_initfn(Object *obj)
+ {
+@@ -1901,6 +1915,11 @@ static void pc_machine_class_init(ObjectClass *oc, void *data)
+     object_class_property_add_bool(oc, "fd-bootchk",
+         pc_machine_get_fd_bootchk,
+         pc_machine_set_fd_bootchk);
++
++    object_class_property_add_str(oc, "l2bios",
++        pc_machine_get_firmware, pc_machine_set_firmware);
++    object_class_property_set_description(oc, "l2bios",
++        "Firmware image for L2");
+ }
+ 
+ static const TypeInfo pc_machine_info = {
+diff --git a/hw/i386/pc_sysfw.c b/hw/i386/pc_sysfw.c
+index 945978ee59..6e1ac77acd 100644
+--- a/hw/i386/pc_sysfw.c
++++ b/hw/i386/pc_sysfw.c
+@@ -195,7 +195,7 @@ void pc_system_firmware_init(PCMachineState *pcms,
+     BlockBackend *pflash_blk[ARRAY_SIZE(pcms->flash)];
+ 
+     if (!pcmc->pci_enabled) {
+-        x86_bios_rom_init(MACHINE(pcms), "bios.bin", rom_memory, true);
++        x86_bios_rom_init(MACHINE(pcms), "bios.bin", pcms->firmware2, rom_memory, true);
+         return;
+     }
+ 
+@@ -219,7 +219,7 @@ void pc_system_firmware_init(PCMachineState *pcms,
+ 
+     if (!pflash_blk[0]) {
+         /* Machine property pflash0 not set, use ROM mode */
+-        x86_bios_rom_init(MACHINE(pcms), "bios.bin", rom_memory, false);
++        x86_bios_rom_init(MACHINE(pcms), "bios.bin", pcms->firmware2, rom_memory, false);
+     } else {
+         if (kvm_enabled() && !kvm_readonly_mem_enabled()) {
+             /*
+diff --git a/hw/i386/x86.c b/hw/i386/x86.c
+index 6ff2475535..23ed1a7a09 100644
+--- a/hw/i386/x86.c
++++ b/hw/i386/x86.c
+@@ -1138,12 +1138,13 @@ void x86_load_linux(X86MachineState *x86ms,
+ }
+ 
+ void x86_bios_rom_init(MachineState *ms, const char *default_firmware,
+-                       MemoryRegion *rom_memory, bool isapc_ram_fw)
++                       const char *firmware2, MemoryRegion *rom_memory,
++                       bool isapc_ram_fw)
+ {
+     const char *bios_name;
+-    char *filename;
+-    MemoryRegion *bios, *isa_bios;
+-    int bios_size, isa_bios_size;
++    char *filename, *filename2 = NULL;
++    MemoryRegion *bios, *bios2 = NULL, *isa_bios;
++    int bios_size, bios2_size = 0, isa_bios_size;
+     ssize_t ret;
+ 
+     /* BIOS load */
+@@ -1179,6 +1180,27 @@ void x86_bios_rom_init(MachineState *ms, const char *default_firmware,
+         void *ptr = memory_region_get_ram_ptr(bios);
+         load_image_size(filename, ptr, bios_size);
+         x86_firmware_configure(ptr, bios_size);
++
++        if (firmware2) {
++            /* BIOS2 load */
++            bios_name = firmware2;
++            filename2 = qemu_find_file(QEMU_FILE_TYPE_BIOS, bios_name);
++            if (filename2) {
++                bios2_size = get_image_size(filename2);
++            } else {
++                bios2_size = -1;
++            }
++            if (bios2_size <= 0 ||
++                    (bios2_size % 65536) != 0) {
++                goto bios_error;
++            }
++            bios2 = g_malloc(sizeof(*bios2));
++            memory_region_init_ram_guest_memfd(bios2, NULL, "pc.bios2", bios2_size, &error_fatal);
++            tdx_set_bios2_region(bios2);
++
++            ptr = memory_region_get_ram_ptr(bios2);
++            load_image_size(filename2, ptr, bios2_size);
++        }
+     } else {
+         if (!isapc_ram_fw) {
+             memory_region_set_readonly(bios, true);
+@@ -1189,6 +1211,7 @@ void x86_bios_rom_init(MachineState *ms, const char *default_firmware,
+         }
+     }
+     g_free(filename);
++    g_free(filename2);
+ 
+     /* For TDX, alias different GPAs to same private memory is not supported */
+     if (!is_tdx_vm()) {
+@@ -1206,9 +1229,15 @@ void x86_bios_rom_init(MachineState *ms, const char *default_firmware,
+         }
+     }
+ 
+-    /* map all the bios at the top of memory */
++    if (bios2) {
++        /* map bios2 at the top of memory */
++        memory_region_add_subregion(rom_memory,
++                                    (uint32_t)(-bios2_size),
++                                    bios2);
++    }
++    /* map bios right below bios2, or at the top of memory */
+     memory_region_add_subregion(rom_memory,
+-                                (uint32_t)(-bios_size),
++                                (uint32_t)(-(bios_size + bios2_size)),
+                                 bios);
+     return;
+ 
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index 91be8e3b35..69f07917aa 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -43,6 +43,7 @@ typedef struct PCMachineState {
+     OnOffAuto vmport;
+     SmbiosEntryPointType smbios_entry_point_type;
+     const char *south_bridge;
++    char *firmware2;
+ 
+     bool acpi_build_enabled;
+     bool smbus_enabled;
+diff --git a/include/hw/i386/x86.h b/include/hw/i386/x86.h
+index 033f0a3489..75bfaa6fbc 100644
+--- a/include/hw/i386/x86.h
++++ b/include/hw/i386/x86.h
+@@ -119,7 +119,8 @@ void x86_cpu_unplug_cb(HotplugHandler *hotplug_dev,
+                        DeviceState *dev, Error **errp);
+ 
+ void x86_bios_rom_init(MachineState *ms, const char *default_firmware,
+-                       MemoryRegion *rom_memory, bool isapc_ram_fw);
++                       const char *firmware2, MemoryRegion *rom_memory,
++                       bool isapc_ram_fw);
+ 
+ void x86_load_linux(X86MachineState *x86ms,
+                     FWCfgState *fw_cfg,
+diff --git a/target/i386/kvm/tdx.c b/target/i386/kvm/tdx.c
+index 26a07a8140..1d60682476 100644
+--- a/target/i386/kvm/tdx.c
++++ b/target/i386/kvm/tdx.c
+@@ -480,6 +480,12 @@ void tdx_set_tdvf_region(MemoryRegion *tdvf_mr)
+     tdx_guest->tdvf_mr = tdvf_mr;
+ }
+ 
++void tdx_set_bios2_region(MemoryRegion *bios2_region)
++{
++    assert(!tdx_guest->bios2_region);
++    tdx_guest->bios2_region = bios2_region;
++}
++
+ static TdxFirmwareEntry *tdx_get_hob_entry(TdxGuest *tdx)
+ {
+     TdxFirmwareEntry *entry;
+@@ -697,6 +703,26 @@ static void tdx_finalize_vm(Notifier *notifier, void *unused)
+     ram_block = tdx_guest->tdvf_mr->ram_block;
+     ram_block_discard_range(ram_block, 0, ram_block->max_length);
+ 
++    if (tdx_guest->bios2_region) {
++        struct kvm_memory_mapping mem_region = {
++            .source = (__u64)memory_region_get_ram_ptr(tdx_guest->bios2_region),
++            .base_gfn = (__u64)(((uint32_t)-tdx_guest->bios2_region->size) >> 12),
++            .nr_pages = tdx_guest->bios2_region->size >> 12,
++        };
++
++        do {
++            r = kvm_vcpu_ioctl(first_cpu, KVM_MEMORY_MAPPING, &mem_region);
++        } while (r == -EAGAIN);
++
++        if (r < 0) {
++             error_report("KVM_MEMORY_MAPPING failed %s", strerror(-r));
++             exit(1);
++        }
++
++        ram_block = tdx_guest->bios2_region->ram_block;
++        ram_block_discard_range(ram_block, 0, ram_block->max_length);
++    }
++
+     r = tdx_vm_ioctl(KVM_TDX_FINALIZE_VM, 0, NULL);
+     if (r < 0) {
+         error_report("KVM_TDX_FINALIZE_VM failed %s", strerror(-r));
+diff --git a/target/i386/kvm/tdx.h b/target/i386/kvm/tdx.h
+index 60646a6502..1de7b87225 100644
+--- a/target/i386/kvm/tdx.h
++++ b/target/i386/kvm/tdx.h
+@@ -65,6 +65,7 @@ typedef struct TdxGuest {
+     TdxQuoteGenerator *quote_generator;
+ 
+     uint8_t num_l2_vms;
++    MemoryRegion *bios2_region;
+ } TdxGuest;
+ 
+ #ifdef CONFIG_TDX
+@@ -77,6 +78,7 @@ void tdx_get_supported_cpuid(uint32_t function, uint32_t index, int reg,
+                              uint32_t *ret);
+ int tdx_pre_create_vcpu(CPUState *cpu, Error **errp);
+ void tdx_set_tdvf_region(MemoryRegion *tdvf_mr);
++void tdx_set_bios2_region(MemoryRegion *bios2_region);
+ int tdx_parse_tdvf(void *flash_ptr, int size);
+ int tdx_handle_exit(X86CPU *cpu, struct kvm_tdx_exit *tdx_exit);
+ 
+-- 
+2.40.0
+

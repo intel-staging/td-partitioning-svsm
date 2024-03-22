@@ -1,0 +1,49 @@
+From 2402fc0890cc1713512cdd0ad498c82b99e2148a Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Thu, 9 Mar 2023 11:31:27 +0800
+Subject: [PATCH 2/9] linux-header: update to support creating L2 TD
+
+With TD partitioning supported by TDX, KVM allows user space VMM to
+decide how many L2 VMs can be created by a TD. So the linux-header file
+introduced new elements to specific the maximum number of L2 VM can be
+supported by TDX, and the actual number of L2 VM will be created.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ linux-headers/asm-x86/kvm.h | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/linux-headers/asm-x86/kvm.h b/linux-headers/asm-x86/kvm.h
+index c2c3123f88..f94449bde8 100644
+--- a/linux-headers/asm-x86/kvm.h
++++ b/linux-headers/asm-x86/kvm.h
+@@ -616,7 +616,8 @@ struct kvm_tdx_capabilities {
+ 	__u64 xfam_fixed0;
+ 	__u64 xfam_fixed1;
+ 	__u32 supported_gpaw;
+-	__u32 padding;
++	__u8  max_num_l2_vms;
++	__u8  padding[3];
+ 	__u64 reserved[251];
+ 
+ 	__u32 nr_cpuid_configs;
+@@ -628,13 +629,15 @@ struct kvm_tdx_init_vm {
+ 	__u64 mrconfigid[6];	/* sha384 digest */
+ 	__u64 mrowner[6];	/* sha384 digest */
+ 	__u64 mrownerconfig[6];	/* sha384 digest */
++	__u8  num_l2_vms;
++	__u8  padding[7];
+ 	/*
+ 	 * For future extensibility to make sizeof(struct kvm_tdx_init_vm) = 8KB.
+ 	 * This should be enough given sizeof(TD_PARAMS) = 1024.
+ 	 * 8KB was chosen given because
+ 	 * sizeof(struct kvm_cpuid_entry2) * KVM_MAX_CPUID_ENTRIES(=256) = 8KB.
+ 	 */
+-	__u64 reserved[1004];
++	__u64 reserved[1003];
+ 
+ 	/*
+ 	 * Call KVM_TDX_INIT_VM before vcpu creation, thus before
+-- 
+2.40.0
+

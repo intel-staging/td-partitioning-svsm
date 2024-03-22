@@ -1,0 +1,88 @@
+From f1252d6dc7db6c7aa94ab842eebf6923d641db75 Mon Sep 17 00:00:00 2001
+From: Jiaqi Gao <jiaqi.gao@intel.com>
+Date: Mon, 11 Mar 2024 10:15:59 +0000
+Subject: [PATCH 1/9] i386/tdx: handle the case that HOB is not provided by
+ TDVF
+
+It is possible that TDVF may have 0 TD_HOB section. Change the tdx
+initialization path to do the check. Pass the hob address to KVM only
+when TD_HOB section is provided by the TDVF binary.
+
+Signed-off-by: Jiaqi Gao <jiaqi.gao@intel.com>
+Signed-off-by: Wei Wang <wei.w.wang@intel.com>
+---
+ hw/i386/tdvf-hob.c    | 20 +++++++++++---------
+ target/i386/kvm/tdx.c | 11 ++++++++---
+ 2 files changed, 19 insertions(+), 12 deletions(-)
+
+diff --git a/hw/i386/tdvf-hob.c b/hw/i386/tdvf-hob.c
+index 0da6ff2df5..c2679e83ad 100644
+--- a/hw/i386/tdvf-hob.c
++++ b/hw/i386/tdvf-hob.c
+@@ -106,18 +106,20 @@ static void tdvf_hob_add_memory_resources(TdxGuest *tdx, TdvfHob *hob)
+ 
+ void tdvf_hob_create(TdxGuest *tdx, TdxFirmwareEntry *td_hob)
+ {
+-    TdvfHob hob = {
+-        .hob_addr = td_hob->address,
+-        .size = td_hob->size,
+-        .ptr = td_hob->mem_ptr,
+-
+-        .current = td_hob->mem_ptr,
+-        .end = td_hob->mem_ptr + td_hob->size,
+-    };
+-
++    TdvfHob hob;
+     EFI_HOB_GENERIC_HEADER *last_hob;
+     EFI_HOB_HANDOFF_INFO_TABLE *hit;
+ 
++    if (!td_hob) {
++        return;
++    }
++
++    hob.hob_addr = td_hob->address,
++    hob.size = td_hob->size,
++    hob.ptr = td_hob->mem_ptr,
++    hob.current = td_hob->mem_ptr,
++    hob.end = td_hob->mem_ptr + td_hob->size,
++
+     /* Note, Efi{Free}Memory{Bottom,Top} are ignored, leave 'em zeroed. */
+     hit = tdvf_get_area(&hob, sizeof(*hit));
+     *hit = (EFI_HOB_HANDOFF_INFO_TABLE) {
+diff --git a/target/i386/kvm/tdx.c b/target/i386/kvm/tdx.c
+index b1fb326bd3..85383d1c5d 100644
+--- a/target/i386/kvm/tdx.c
++++ b/target/i386/kvm/tdx.c
+@@ -489,8 +489,8 @@ static TdxFirmwareEntry *tdx_get_hob_entry(TdxGuest *tdx)
+             return entry;
+         }
+     }
+-    error_report("TDVF metadata doesn't specify TD_HOB location.");
+-    exit(1);
++
++    return NULL;
+ }
+ 
+ static void tdx_add_ram_entry(uint64_t address, uint64_t length,
+@@ -600,12 +600,17 @@ static void tdx_init_ram_entries(void)
+ static void tdx_post_init_vcpus(void)
+ {
+     TdxFirmwareEntry *hob;
++    void *hob_addr = NULL;
+     CPUState *cpu;
+     int r;
+ 
+     hob = tdx_get_hob_entry(tdx_guest);
++    if (hob) {
++        hob_addr = (void *)hob->address;
++    }
++
+     CPU_FOREACH(cpu) {
+-        r = tdx_vcpu_ioctl(cpu, KVM_TDX_INIT_VCPU, 0, (void *)hob->address);
++        r = tdx_vcpu_ioctl(cpu, KVM_TDX_INIT_VCPU, 0, hob_addr);
+         if (r < 0) {
+             error_report("KVM_TDX_INIT_VCPU failed %s", strerror(-r));
+             exit(1);
+-- 
+2.40.0
+

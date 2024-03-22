@@ -1,0 +1,53 @@
+From 926e87da01c932d0dc49709074e55e458885e817 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <jroedel@suse.de>
+Date: Fri, 3 Mar 2023 16:49:54 +0100
+Subject: [PATCH 8/9] ACPI: Rebuild ACPI tables on every read
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ hw/i386/acpi-build.c | 13 ++-----------
+ 1 file changed, 2 insertions(+), 11 deletions(-)
+
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index 8b493a2e96..16c12424ed 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -2792,11 +2792,10 @@ static void acpi_build_update(void *build_opaque)
+     AcpiBuildState *build_state = build_opaque;
+     AcpiBuildTables tables;
+ 
+-    /* No state to update or already patched? Nothing to do. */
+-    if (!build_state || build_state->patched) {
++    /* No state? Nothing to do. */
++    if (!build_state) {
+         return;
+     }
+-    build_state->patched = 1;
+ 
+     acpi_build_tables_init(&tables);
+ 
+@@ -2814,12 +2813,6 @@ static void acpi_build_update(void *build_opaque)
+     acpi_build_tables_cleanup(&tables, true);
+ }
+ 
+-static void acpi_build_reset(void *build_opaque)
+-{
+-    AcpiBuildState *build_state = build_opaque;
+-    build_state->patched = 0;
+-}
+-
+ static const VMStateDescription vmstate_acpi_build = {
+     .name = "acpi_build",
+     .version_id = 1,
+@@ -2915,8 +2908,6 @@ void acpi_setup(void)
+                                                  ACPI_BUILD_RSDP_FILE);
+     }
+ 
+-    qemu_register_reset(acpi_build_reset, build_state);
+-    acpi_build_reset(build_state);
+     vmstate_register(NULL, 0, &vmstate_acpi_build, build_state);
+ 
+     /* Cleanup tables but don't free the memory: we track it
+-- 
+2.40.0
+

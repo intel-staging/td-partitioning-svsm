@@ -1,0 +1,108 @@
+From 36c9f75751b291db6ab709d1c7a0a1017ca799e5 Mon Sep 17 00:00:00 2001
+From: Peter Fang <peter.fang@intel.com>
+Date: Mon, 25 Sep 2023 01:49:18 -0700
+Subject: [PATCH 5/9] i386/tdx: support loading the SVSM image as BIOS
+
+Discover the SVSM GUID while parsing the BIOS image, and set up a couple
+of default memory regions when an SVSM image is found:
+
+- The SVSM ROM region (BFV)
+- The stage2 bootloader region (0 - 640K, TEMP_MEM)
+
+Signed-off-by: Peter Fang <peter.fang@intel.com>
+Signed-off-by: Vijay Dhanraj <vijay.dhanraj@intel.com>
+---
+ hw/i386/tdvf.c         | 36 ++++++++++++++++++++++++++++++++++--
+ include/hw/i386/tdvf.h |  2 ++
+ 2 files changed, 36 insertions(+), 2 deletions(-)
+
+diff --git a/hw/i386/tdvf.c b/hw/i386/tdvf.c
+index 0a64457051..a91e8ecf78 100644
+--- a/hw/i386/tdvf.c
++++ b/hw/i386/tdvf.c
+@@ -22,11 +22,13 @@
+ #include "qemu/osdep.h"
+ #include "qemu/error-report.h"
+ 
++#include "qemu/units.h"
+ #include "hw/i386/pc.h"
+ #include "hw/i386/tdvf.h"
+ #include "sysemu/kvm.h"
+ 
+ #define TDX_METADATA_OFFSET_GUID    "e47a6535-984a-4798-865e-4685a7bf8ec2"
++#define SVSM_INFO_GUID              "a789a612-0597-4c4b-a49f-cbb1fe9d1ddd"
+ #define TDX_METADATA_VERSION        1
+ #define TDVF_SIGNATURE              0x46564454 /* TDVF as little endian */
+ 
+@@ -51,7 +53,7 @@ struct tdx_metadata_offset {
+     uint32_t offset;
+ };
+ 
+-static TdvfMetadata *tdvf_get_metadata(void *flash_ptr, int size)
++static TdvfMetadata *tdvf_get_metadata(TdxFirmware *fw, void *flash_ptr, int size)
+ {
+     TdvfMetadata *metadata;
+     uint32_t offset = 0;
+@@ -67,6 +69,9 @@ static TdvfMetadata *tdvf_get_metadata(void *flash_ptr, int size)
+         if (offset + sizeof(*metadata) > size) {
+             return NULL;
+         }
++    } else if (pc_system_ovmf_table_find(SVSM_INFO_GUID, NULL, NULL)) {
++        fw->svsm_found = true;
++        return NULL;
+     } else {
+         error_report("Cannot find TDX_METADATA_OFFSET_GUID");
+         return NULL;
+@@ -154,8 +159,35 @@ int tdvf_parse_metadata(TdxFirmware *fw, void *flash_ptr, int size)
+     ssize_t entries_size;
+     uint32_t len, i;
+ 
+-    metadata = tdvf_get_metadata(flash_ptr, size);
++    metadata = tdvf_get_metadata(fw, flash_ptr, size);
+     if (!metadata) {
++        if (fw->svsm_found) {
++            TdxFirmwareEntry *entry;
++
++            warn_report("=== SVSM image found ===");
++            fw->nr_entries = 2;
++            fw->entries = g_new(TdxFirmwareEntry, fw->nr_entries);
++
++            entry = &fw->entries[0];
++            entry->data_offset = 0;
++            entry->data_len = size;
++            entry->address = 4 * GiB - 2 * MiB - size;
++            entry->size = size;
++            entry->type = TDVF_SECTION_TYPE_BFV;
++            entry->attributes = 0;
++
++            /* Use first 640kb of memory for stage2 loader */
++            entry = &fw->entries[1];
++            entry->data_offset = 0;
++            entry->data_len = 0;
++            entry->address = 0;
++            entry->size = 640 * KiB;
++            entry->type = TDVF_SECTION_TYPE_TEMP_MEM;
++            entry->attributes = 0;
++
++            fw->mem_ptr = flash_ptr;
++            return 0;
++        }
+         return -EINVAL;
+     }
+ 
+diff --git a/include/hw/i386/tdvf.h b/include/hw/i386/tdvf.h
+index d880af245a..455d809571 100644
+--- a/include/hw/i386/tdvf.h
++++ b/include/hw/i386/tdvf.h
+@@ -48,6 +48,8 @@ typedef struct TdxFirmware {
+ 
+     uint32_t nr_entries;
+     TdxFirmwareEntry *entries;
++
++    bool svsm_found;
+ } TdxFirmware;
+ 
+ #define for_each_tdx_fw_entry(fw, e)    \
+-- 
+2.40.0
+

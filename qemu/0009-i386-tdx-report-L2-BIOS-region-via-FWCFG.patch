@@ -1,0 +1,62 @@
+From 72cff0323de674b7581b68ea875a2d259e4128a2 Mon Sep 17 00:00:00 2001
+From: Peter Fang <peter.fang@intel.com>
+Date: Wed, 6 Mar 2024 03:43:10 -0800
+Subject: [PATCH 9/9] i386/tdx: report L2 BIOS region via FWCFG
+
+Since the L2 BIOS region is not visible in e820, add a FWCFG file,
+etc/tdx/l2bios, for the guest to query this region.
+
+Signed-off-by: Peter Fang <peter.fang@intel.com>
+---
+ include/exec/memory.h | 2 ++
+ system/memory.c       | 2 +-
+ target/i386/kvm/tdx.c | 7 +++++++
+ 3 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/include/exec/memory.h b/include/exec/memory.h
+index 1e351f6fc8..e90f33c068 100644
+--- a/include/exec/memory.h
++++ b/include/exec/memory.h
+@@ -2552,6 +2552,8 @@ void memory_global_dirty_log_sync(bool last_stage);
+  */
+ void memory_global_after_dirty_log_sync(void);
+ 
++hwaddr memory_region_to_absolute_addr(MemoryRegion *mr, hwaddr offset);
++
+ /**
+  * memory_region_transaction_begin: Start a transaction.
+  *
+diff --git a/system/memory.c b/system/memory.c
+index 85a22408e9..18c834089c 100644
+--- a/system/memory.c
++++ b/system/memory.c
+@@ -410,7 +410,7 @@ static inline uint64_t memory_region_shift_write_access(uint64_t *value,
+     return tmp;
+ }
+ 
+-static hwaddr memory_region_to_absolute_addr(MemoryRegion *mr, hwaddr offset)
++hwaddr memory_region_to_absolute_addr(MemoryRegion *mr, hwaddr offset)
+ {
+     MemoryRegion *root;
+     hwaddr abs_addr = offset;
+diff --git a/target/i386/kvm/tdx.c b/target/i386/kvm/tdx.c
+index 3962623790..8ec2523a0d 100644
+--- a/target/i386/kvm/tdx.c
++++ b/target/i386/kvm/tdx.c
+@@ -688,6 +688,13 @@ void tdx_init_fw_cfg(MachineState *ms)
+     data.size = cpu_to_le64(tdx->svsm_size);
+ 
+     fw_cfg_add_file(x86ms->fw_cfg, "etc/tdx/svsm", g_memdup(&data, sizeof(data)), sizeof(data));
++
++    if (tdx->bios2_region) {
++        data.base = cpu_to_le64((uint64_t)memory_region_to_absolute_addr(tdx->bios2_region, 0));
++        data.size = cpu_to_le64(memory_region_size(tdx->bios2_region));
++        fw_cfg_add_file(x86ms->fw_cfg, "etc/tdx/l2bios",
++                g_memdup(&data, sizeof(data)), sizeof(data));
++    }
+ }
+ 
+ static void tdx_finalize_vm(Notifier *notifier, void *unused)
+-- 
+2.40.0
+

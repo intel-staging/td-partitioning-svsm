@@ -1,0 +1,98 @@
+From 68cf47850c69e6166fa29607135635d4e737f6c1 Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Thu, 9 Mar 2023 11:34:17 +0800
+Subject: [PATCH 3/9] i386/tdx: Add property num-l2-vms for tdx-guest object
+
+TDX allows a TD to create several L2 VMs. The property of num-l2-vms
+can let the user to config how many L2 VMs will be supported by this TD
+through command line. And when doing KVM_TDX_INIT_VM, send this number
+to KVM for TD initialization.
+
+The maximum supported L2 VMs number is exposed by KVM through TDX
+capabilities. So this cap can be used to check if user has configured an
+invalid number of L2 VMs or not before initializing a TD.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Signed-off-by: Vijay Dhanraj <vijay.dhanraj@intel.com>
+---
+ qapi/qom.json         |  6 +++++-
+ target/i386/kvm/tdx.c | 11 +++++++++++
+ target/i386/kvm/tdx.h |  2 ++
+ 3 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/qapi/qom.json b/qapi/qom.json
+index 7b26b0a0d3..4559fbc371 100644
+--- a/qapi/qom.json
++++ b/qapi/qom.json
+@@ -922,6 +922,9 @@
+ #     TD guest cannot get TD quoting for attestation if QGS is not
+ #     provided.  So admin should always provide it.
+ #
++# @num-l2-vms: command-line option to specify number of L2 VMs that
++#     will be supported by the TD guest.
++#
+ # Since: 9.0
+ ##
+ { 'struct': 'TdxGuestProperties',
+@@ -929,7 +932,8 @@
+             '*mrconfigid': 'str',
+             '*mrowner': 'str',
+             '*mrownerconfig': 'str',
+-            '*quote-generation-socket': 'SocketAddress' } }
++            '*quote-generation-socket': 'SocketAddress',
++            '*num-l2-vms': 'uint8' } }
+ 
+ ##
+ # @ThreadContextProperties:
+diff --git a/target/i386/kvm/tdx.c b/target/i386/kvm/tdx.c
+index 85383d1c5d..26a07a8140 100644
+--- a/target/i386/kvm/tdx.c
++++ b/target/i386/kvm/tdx.c
+@@ -741,6 +741,13 @@ static int tdx_kvm_init(ConfidentialGuestSupport *cgs, Error **errp)
+         }
+     }
+ 
++    /* Sanity check. The num_l2_vms should not exceed the max_num_l2_vms */
++    if (tdx->num_l2_vms > tdx_caps->max_num_l2_vms) {
++        error_setg(errp, "TDX VM doesn't support %d L2 VMs, maximum %d",
++                   tdx->num_l2_vms, tdx_caps->max_num_l2_vms);
++        return -EINVAL;
++    }
++
+     update_tdx_cpuid_lookup_by_tdx_caps();
+ 
+     /*
+@@ -875,6 +882,7 @@ int tdx_pre_create_vcpu(CPUState *cpu, Error **errp)
+     init_vm->cpuid.nent = kvm_x86_arch_cpuid(env, init_vm->cpuid.entries, 0);
+ 
+     init_vm->attributes = tdx_guest->attributes;
++    init_vm->num_l2_vms = tdx_guest->num_l2_vms;
+ 
+     do {
+         r = tdx_vm_ioctl(KVM_TDX_INIT_VM, 0, init_vm);
+@@ -1362,6 +1370,9 @@ static void tdx_guest_init(Object *obj)
+ 
+     tdx->event_notify_vector = -1;
+     tdx->event_notify_apicid = -1;
++
++    object_property_add_uint8_ptr(obj, "num-l2-vms", &tdx->num_l2_vms,
++                                  OBJ_PROP_FLAG_READWRITE);
+ }
+ 
+ static void tdx_guest_finalize(Object *obj)
+diff --git a/target/i386/kvm/tdx.h b/target/i386/kvm/tdx.h
+index 86b1f80d6f..60646a6502 100644
+--- a/target/i386/kvm/tdx.h
++++ b/target/i386/kvm/tdx.h
+@@ -63,6 +63,8 @@ typedef struct TdxGuest {
+ 
+     /* GetQuote */
+     TdxQuoteGenerator *quote_generator;
++
++    uint8_t num_l2_vms;
+ } TdxGuest;
+ 
+ #ifdef CONFIG_TDX
+-- 
+2.40.0
+
