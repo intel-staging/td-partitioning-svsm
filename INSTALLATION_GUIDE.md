@@ -85,9 +85,10 @@ No additional kernel config is required comparing with TDX. Use the same kernel 
     CONFIG_INTEL_TDX_HOST=y
     CONFIG_KVM=y
     CONFIG_KVM_INTEL=y
-    CONFIG_KVM_MMU_PRIVATE=y
 
 When loading kvm_intel, use module parameter "kvm_intel.tdx=on". By default TDX support is disabled. For automation, add it to kernel command line, or edit modules.conf.
+
+The <TDP-patches-folder>/linux/reference-config is a reference kernel config file with configuring KVM/KVM_INTEL as modules.
 
 ### 3.2 Build and Install Kernel
 
