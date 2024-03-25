@@ -171,7 +171,7 @@ The OVMF compilation process follows the standard procedure without any special 
     $ source ./edksetup.sh
     $ build -a X64 -b DEBUG -t GCC5 -D FD_SIZE_2MB -D DEBUG_ON_SERIAL_PORT -D DEBUG_VERBOSE -p OvmfPkg/OvmfPkgX64.dsc
     
-Get built OVMF.fd in this path: <your edk2 path>/Build/OvmfX64/DEBUG_GCC5/FV/OVMF.fd
+Get built OVMF.fd in this path: Build/OvmfX64/DEBUG_GCC5/FV/OVMF.fd
 
 # Setup Coconut-svsm
 
@@ -242,8 +242,8 @@ Here is a reference script,
     CPU=8
 
     QEMU=/path/to/qemu-system-x86_64 (refer to qemu section)
-    KERNEL=/path/to/kernel/bzImage   (see earlier section on Guest kernel, Image and rootfs)
-    INITRD=/path/to/initrd           (see earlier section on Guest kernel, Image and rootfs)
+    KERNEL=/path/to/kernel/vmlinuz-5.14.0-427.el9.x86_64 (see earlier section on Guest kernel, Image and rootfs)
+    INITRD=/path/to/initramfs-5.14.0-427.el9.x86_64.img (see earlier section on Guest kernel, Image and rootfs)
     L2BIOS=/path/to/OVMF.fd           (refer to ovmf section)
     BIOS=/path/to/svsm.bin           (refer to coconut-svsm section)
     L2_ROOT_DISK=/path/to/CentOS-Stream-GenericCloud-9-20240311.0.x86_64.qcow2
