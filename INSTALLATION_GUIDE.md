@@ -83,8 +83,8 @@ Series#6 and series#7 are included in the SVSM repo, so no need to download but 
 No additional kernel config is required comparing with TDX. Use the same kernel config with TDX as recommended [here](https://github.com/intel/tdx/wiki/TDX-KVM#configurations).
 
     CONFIG_INTEL_TDX_HOST=y
-    CONFIG_KVM=y
-    CONFIG_KVM_INTEL=y
+    CONFIG_KVM=m
+    CONFIG_KVM_INTEL=m
 
 When loading kvm_intel, use module parameter "kvm_intel.tdx=on". By default TDX support is disabled. For automation, add it to kernel command line, or edit modules.conf.
 
@@ -171,6 +171,8 @@ The OVMF compilation process follows the standard procedure without any special 
     $ source ./edksetup.sh
     $ build -a X64 -b DEBUG -t GCC5 -D FD_SIZE_2MB -D DEBUG_ON_SERIAL_PORT -D DEBUG_VERBOSE -p OvmfPkg/OvmfPkgX64.dsc
 
+Get built OVMF.fd in this path: Build/OvmfX64/DEBUG_GCC5/FV/OVMF.fd
+
 # Setup Coconut-svsm
 
 ## 1. Coconut-svsm Source Code With TDP Patches:
@@ -240,10 +242,11 @@ Here is a reference script,
     CPU=8
 
     QEMU=/path/to/qemu-system-x86_64 (refer to qemu section)
-    KERNEL=/path/to/kernel/bzImage   (see earlier section on Guest kernel, Image and rootfs)
-    INITRD=/path/to/initrd           (see earlier section on Guest kernel, Image and rootfs)
-    L2BIOS=/path/to/ovmf             (refer to ovmf section)
+    KERNEL=/path/to/kernel/vmlinuz-5.14.0-427.el9.x86_64 (see earlier section on Guest kernel, Image and rootfs)
+    INITRD=/path/to/initramfs-5.14.0-427.el9.x86_64.img (see earlier section on Guest kernel, Image and rootfs)
+    L2BIOS=/path/to/OVMF.fd          (refer to ovmf section)
     BIOS=/path/to/svsm.bin           (refer to coconut-svsm section)
+    L2_ROOT_DISK=/path/to/CentOS-Stream-GenericCloud-9-20240311.0.x86_64.qcow2 (see earlier section on Guest kernel, Image and rootfs)
 
     APPEND="root=/dev/vda1 rw console=hvc0 earlyprintk=ttyS0 loglevel=8 ignore_loglevel nopvspin"
 
