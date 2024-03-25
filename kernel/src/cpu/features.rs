@@ -52,7 +52,7 @@ lazy_static! {
 }
 
 pub fn cpu_has_feature(feat: u32) -> bool {
-    X86_FEATURES.word[(feat / 32) as usize] & (feat % 32) != 0
+    X86_FEATURES.word[(feat / 32) as usize] & (1u32 << (feat % 32)) != 0
 }
 
 pub fn cpu_has_xcr0_features(feats: u64) -> bool {
