@@ -7,7 +7,6 @@
 //  Jason CJ Chen <jason.cj.chen@intel.com>
 
 use super::interrupts::{register_interrupt_handlers, TIMER_VECTOR};
-use super::sirte::Sirte;
 use super::tdp::{get_tdp_vm_id, init_tdps};
 use super::utils::{tdvps_l2_ctls, L2CtlsFlags, TdpVmId, MAX_NUM_L2_VMS};
 use super::vcpu::Vcpu;
@@ -28,7 +27,6 @@ use core::mem::MaybeUninit;
 struct TdpVp {
     vcpu: Vcpu,
     l2ctls: L2CtlsFlags,
-    sirte: Sirte,
 }
 
 impl TdpVp {
@@ -36,7 +34,6 @@ impl TdpVp {
         self.vcpu.init(vm_id, apic_id, is_bsp);
         self.l2ctls = L2CtlsFlags::EnableSharedEPTP;
         tdvps_l2_ctls(vm_id, self.l2ctls).expect("Failed to set L2 controls");
-        self.sirte.init(vm_id).expect("Failed to init SIRTE");
     }
 
     fn run(&mut self) {
@@ -60,12 +57,6 @@ impl PerCpuArch for TdPerCpu {
     }
 
     fn setup_on_cpu(&self) -> Result<(), SvsmError> {
-        // Setup TD environment on BSP only
-        if self.is_bsp {
-            init_tdps(self.apic_id).map_err(SvsmError::Tdx)?;
-            register_interrupt_handlers()?;
-        }
-
         if cpu_has_feature(X86_FEATURE_XSAVE) {
             write_cr4(read_cr4() | CR4Flags::OSXSAVE);
         }
@@ -75,6 +66,14 @@ impl PerCpuArch for TdPerCpu {
         enable_irq();
 
         Ok(())
+    }
+
+    fn load(&self) {
+        // Setup TD environment on BSP only
+        if self.is_bsp {
+            init_tdps(self.apic_id).expect("Failed to init tdps");
+            register_interrupt_handlers().expect("Failed to register interrupt handlers");
+        }
     }
 }
 
@@ -133,19 +132,6 @@ pub fn this_vcpu_mut(vm_id: TdpVmId) -> &'static mut Vcpu {
     }
 
     panic!("TDX: NO vcpu found for VM{:?}", vm_id)
-}
-
-pub fn this_sirte_mut(vm_id: TdpVmId) -> &'static mut Sirte {
-    if let Some(td_percpu) = this_cpu().arch.as_any().downcast_ref::<TdPerCpu>() {
-        if let Some(vaddr) = td_percpu.tdpvps[vm_id.index()].get() {
-            if !vaddr.is_null() {
-                let tdpvp = unsafe { &mut *vaddr.as_mut_ptr::<TdpVp>().cast::<TdpVp>() };
-                return &mut tdpvp.sirte;
-            }
-        }
-    }
-
-    panic!("TDX: NO sirte found for VM{:?}", vm_id)
 }
 
 pub fn run_tdpvp() {

@@ -247,6 +247,8 @@ pub trait PerCpuArch: core::fmt::Debug {
     fn setup_on_cpu(&self) -> Result<(), SvsmError> {
         Ok(())
     }
+    /// This interface is called by Percpu.load().
+    fn load(&self) {}
 }
 
 #[derive(Debug)]
@@ -521,6 +523,7 @@ impl PerCpu {
     pub fn load(&mut self) {
         self.load_pgtable();
         self.load_tss();
+        self.arch.load();
     }
 
     pub fn shutdown(&mut self) -> Result<(), SvsmError> {

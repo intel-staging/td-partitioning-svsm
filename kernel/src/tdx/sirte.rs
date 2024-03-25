@@ -3,6 +3,7 @@
 // Copyright (C) 2023 Intel Corporation
 //
 // Author: Jason CJ Chen <jason.cj.chen@intel.com>
+extern crate alloc;
 
 use super::error::TdxError;
 use super::tdp::{get_tdp_by_notify_vec, get_vcpu_cb, this_tdp};
@@ -12,8 +13,14 @@ use super::vlapic::vlapic_receive_intr;
 use crate::address::VirtAddr;
 use crate::cpu::idt::common::X86ExceptionContext;
 use crate::cpu::lapic::LAPIC;
+use crate::locking::SpinLock;
 use crate::mm::{virt_to_phys, PAGE_SIZE};
+use alloc::{
+    alloc::{alloc_zeroed, Layout},
+    boxed::Box,
+};
 use bitfield_struct::bitfield;
+use core::fmt;
 use core::sync::atomic::{fence, Ordering};
 
 #[bitfield(u8)]
@@ -34,7 +41,7 @@ struct SirteMode {
 // Add rsvd to ensure msi event is of 12 bytes in
 // size.
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 struct MsiEvent {
     mode: SirteMode,
     vector: u8,
@@ -43,7 +50,7 @@ struct MsiEvent {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 struct IrqChipEvent {
     pin: u32,
     level: u32,
@@ -57,10 +64,22 @@ union IrqEvent {
     irqchip: IrqChipEvent,
 }
 
+#[allow(unreachable_patterns)]
+impl fmt::Debug for IrqEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        unsafe {
+            match self {
+                Self { msi } => write!(f, "{:?}", msi),
+                Self { irqchip } => write!(f, "{:?}", irqchip),
+            }
+        }
+    }
+}
+
 const IRQ_TYPE_IOAPIC: u32 = 1;
 const IRQ_TYPE_MSI: u32 = 2;
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct SirtEntry {
     irq_type: u32,
     event: IrqEvent,
@@ -99,15 +118,6 @@ struct MetaData {
 }
 
 impl MetaData {
-    fn new(num_elem: usize, elem_size: usize) -> Self {
-        Self {
-            elem_size: elem_size as u32,
-            num_elem: num_elem as u32,
-            size: (elem_size * num_elem) as u32,
-            ..Default::default()
-        }
-    }
-
     fn is_empty(&self) -> bool {
         self.head == self.tail
     }
@@ -122,7 +132,7 @@ impl MetaData {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 struct SirteHeader {
     vec: u8,
     // padding to make buffer(PAGE_SIZE - Header) a multiple of struct SirtEntry (16 bytes)
@@ -130,26 +140,29 @@ struct SirteHeader {
     mdata: MetaData,
 }
 
+// set size of sirte page to 8K bytes.
+// 48 (sizeof(SirteHeader)) + 8144 data bytes.
+const NUM_SIRTE_ENTRIES: usize = 509;
 #[repr(C)]
 #[repr(align(4096))]
+#[derive(Debug)]
 struct SirtePage {
     sirte_hdr: SirteHeader,
-    data: [SirtEntry; 253],
+    data: [SirtEntry; NUM_SIRTE_ENTRIES],
 }
 
 impl SirtePage {
-    fn new(notification_vector: u8) -> Self {
+    fn init(&mut self, notification_vector: u8) {
         let data_size = core::mem::size_of::<SirtePage>() - core::mem::size_of::<SirteHeader>();
         let elem_size = core::mem::size_of::<SirtEntry>();
         let num_elem = data_size / elem_size;
-        Self {
-            sirte_hdr: SirteHeader {
-                vec: notification_vector,
-                rsv: [0; 15],
-                mdata: MetaData::new(num_elem, elem_size),
-            },
-            data: [SirtEntry::default(); 253],
-        }
+
+        self.sirte_hdr.vec = notification_vector;
+        self.sirte_hdr.mdata.head = 0;
+        self.sirte_hdr.mdata.tail = 0;
+        self.sirte_hdr.mdata.num_elem = num_elem as u32;
+        self.sirte_hdr.mdata.elem_size = elem_size as u32;
+        self.sirte_hdr.mdata.size = (num_elem * elem_size) as u32;
     }
 
     fn read(&mut self) -> Option<SirtEntry> {
@@ -166,27 +179,37 @@ impl SirtePage {
     }
 }
 
-pub struct Sirte {
+#[derive(Debug)]
+struct RawSirte {
     vm_id: TdpVmId,
     page: SirtePage,
 }
 
-impl Sirte {
-    pub fn init(&mut self, vm_id: TdpVmId) -> Result<(), TdxError> {
-        self.vm_id = vm_id;
-        let nv = this_tdp(self.vm_id)
-            .get_sirte_vec()
-            .ok_or(TdxError::Sirte)?;
-
-        let vaddr = VirtAddr::from(core::ptr::addr_of!(self.page));
-        let paddr = virt_to_phys(vaddr);
-        td_convert_kernel_pages(paddr, paddr + PAGE_SIZE, true)?;
-
-        self.page = SirtePage::new(nv);
-        td_share_irte_hdr(paddr, vm_id)
+impl RawSirte {
+    fn new(vmid: TdpVmId) -> Box<RawSirte> {
+        let layout = Layout::new::<Self>();
+        unsafe {
+            let addr = alloc_zeroed(layout);
+            let raw_sirte = addr.cast::<Self>();
+            if raw_sirte.is_null() {
+                panic!("TDX: RawSirte allocation failed for VM{:?}", vmid);
+            }
+            (*raw_sirte).vm_id = vmid;
+            Box::from_raw(raw_sirte)
+        }
     }
 
-    pub fn handle_sirte(&mut self) {
+    fn init(&mut self, nv: u8) -> Result<(), TdxError> {
+        let vaddr = VirtAddr::from(core::ptr::addr_of!(self.page));
+        let paddr = virt_to_phys(vaddr);
+        let num_shared_pages = core::mem::size_of::<SirtePage>() / PAGE_SIZE;
+
+        td_convert_kernel_pages(paddr, paddr + core::mem::size_of::<SirtePage>(), true)?;
+        self.page.init(nv);
+        td_share_irte_hdr(paddr, self.vm_id, num_shared_pages as u64)
+    }
+
+    fn handle_sirte(&mut self) {
         while let Some(sirte) = self.page.read() {
             match sirte.irq_type {
                 IRQ_TYPE_MSI => unsafe {
@@ -212,6 +235,27 @@ impl Sirte {
                 }
             }
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct Sirte {
+    raw: SpinLock<Box<RawSirte>>,
+}
+
+impl Sirte {
+    pub fn new(vmid: TdpVmId) -> Sirte {
+        Sirte {
+            raw: SpinLock::new(RawSirte::new(vmid)),
+        }
+    }
+
+    pub fn init(&self, nv: u8) -> Result<(), TdxError> {
+        self.raw.lock().init(nv)
+    }
+
+    pub fn handle_sirte(&self) {
+        self.raw.lock().handle_sirte()
     }
 }
 

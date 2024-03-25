@@ -9,7 +9,7 @@
 extern crate alloc;
 
 use super::error::TdxError;
-use super::sirte::handle_sirte_request;
+use super::sirte::{handle_sirte_request, Sirte};
 use super::utils::{td_num_l2_vms, TdpVmId, FIRST_VM_ID, MAX_NUM_L2_VMS};
 use super::vcpu::kick_vcpu;
 use super::vcpu_comm::VcpuCommBlock;
@@ -32,6 +32,7 @@ pub struct Tdp {
     vcpuid: Vcpuid,
     vcpu_comms: RWLock<BTreeMap<u32, Arc<VcpuCommBlock>>>,
     sirte_vec: Option<u8>,
+    sirte: Sirte,
     vioapic: Vioapic,
 }
 
@@ -51,18 +52,19 @@ impl Tdp {
             vcpuid: Vcpuid::new(vm_id),
             vcpu_comms: RWLock::new(BTreeMap::new()),
             sirte_vec: None,
+            sirte: Sirte::new(vm_id),
             vioapic: Vioapic::new(vm_id),
         }
     }
 
     fn init(&mut self) -> Result<(), TdxError> {
         self.vcpuid.init();
-        self.sirte_vec = Some(
-            register_interrupt_handler(None, handle_sirte_request).map_err(|e| {
-                log::error!("Tdp failed to register sirte handler: {:?}", e);
-                TdxError::Sirte
-            })?,
-        );
+        let nv = register_interrupt_handler(None, handle_sirte_request).map_err(|e| {
+            log::error!("Tdp failed to register sirte handler: {:?}", e);
+            TdxError::Sirte
+        })?;
+        self.sirte_vec = Some(nv);
+        self.sirte.init(nv).expect("Failed to init Sirte");
         self.vioapic.init();
         Ok(())
     }
@@ -89,8 +91,8 @@ impl Tdp {
         self.vcpu_comms.lock_write().len() as u64 == get_nr_cpus()
     }
 
-    pub fn get_sirte_vec(&self) -> Option<u8> {
-        self.sirte_vec
+    pub fn get_sirte(&self) -> &Sirte {
+        &self.sirte
     }
 
     pub fn get_vm_id(&self) -> TdpVmId {

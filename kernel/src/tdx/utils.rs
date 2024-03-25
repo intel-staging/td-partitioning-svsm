@@ -307,8 +307,12 @@ pub fn td_convert_kernel_pages(
     Ok(end - start)
 }
 
-pub fn td_share_irte_hdr(phys: PhysAddr, vm_id: TdpVmId) -> Result<(), TdxError> {
-    tdvmcall_share_irte_hdr(u64::from(phys), vm_id.index() as u32).map_err(|e| {
+pub fn td_share_irte_hdr(
+    phys: PhysAddr,
+    vm_id: TdpVmId,
+    num_shared_pages: u64,
+) -> Result<(), TdxError> {
+    tdvmcall_share_irte_hdr(u64::from(phys), vm_id.index() as u64, num_shared_pages).map_err(|e| {
         log::error!("share_irte_hdr failed {:?} e", e);
         TdxError::Sirte
     })
