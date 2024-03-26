@@ -1,5 +1,9 @@
 # Introduction
 
+This is the source code and patch repository for Linux host kernel, Qemu and OVMF to add Intel TDX (Trusted Domain eXtension) support to the COCONUT Secure VM Service Module (SVSM), a software which aims to provide secure services and device emulations to guest operating systems in confidential virtual machines (CVMs). The original COCONUT SVSM required AMD Secure Encrypted Virtualization with Secure Nested Paging (AMD SEV-SNP), especially the VM Privilege Level (VMPL) feature. This modification requires Intel TDX (Trusted Domain eXtension) technology, and it is early prototype code to collect feedback. It should only be used for architecture discussion, and NOT for any production related purpose.
+
+The COCONUT-SVSM is distributed under the MIT license, which is included in the LICENSE-MIT file.
+
 ## 1. Prerequisite Setup
 
 Before proceeding, ensure that TDX is enabled, as this document does not provide instructions for enabling TDX or loading a TDX module. It is assumed that the user is already experienced with these processes.
@@ -11,13 +15,16 @@ The TDP related patches for host-kernel/host-qemu/OVMF are published in this rep
 	$ cd <TDP-patches-folder>
 	$ git checkout -b svsm-tdp-patches remotes/origin/svsm-tdp-patches
 
-The host-kernel patches are in <TDP-patches-folder>/linux/
-The host-qemu patches are in <TDP-patches-folder>/qemu/
-The OVMF patches are in <TDP-patches-folder>/ovmf/
+The host-kernel patches are in \<TDP-patches-folder\>/linux/
+
+The host-qemu patches are in \<TDP-patches-folder\>/qemu/
+
+The OVMF patches are in \<TDP-patches-folder\>/ovmf/
 
 ## 2. Hardware Environment
 
 Tested platform: Eagle Stream EMR
+
 TDX module version: TDX_1.5.05.46.698
 
 # Setup Host Kernel
@@ -33,8 +40,8 @@ Plug applying below additional patches:
 * series#4: One workaround patch for Emulate Xen MTRR disablement from intel repo: https://github.com/intel/tdx/commit/5c1b39050a54449331e5190649c23078a2f514db
 * series#5: Two workaround patches for RBP from intel repo: https://github.com/intel/tdx/commit/04c25c1d63af1c9eb1b3678d9192f44150936110 and https://github.com/intel/tdx/commit/fde917bc1af3e1a440ab0cb0d9364f8da25b9e17
 * series#6: One compiling issue fix patch from comment of V19 in community: https://lore.kernel.org/all/20240226192757.GS177224@ls.amr.corp.intel.com/
-  Note: this is *not* a patch in community mailing list but a replied message. This patch is created manually and included in the <TDP-patches-folder>/linux/ as 0001-Fix-kernel-compiling-issue.patch
-* series#7: The TDP Linux kernel patches in the <TDP-patches-folder>/linux/ start from 0002-KVM-TDX-Enumerate-TD-partitioning-feature.patch
+  Note: this is *not* a patch in community mailing list but a replied message. This patch is created manually and included in the \<TDP-patches-folder\>/linux/ as 0001-Fix-kernel-compiling-issue.patch
+* series#7: The TDP Linux kernel patches in the \<TDP-patches-folder\>/linux/ start from 0002-KVM-TDX-Enumerate-TD-partitioning-feature.patch
 
 ## 2. Prepare Host Kernel Tree
 
@@ -88,7 +95,7 @@ No additional kernel config is required comparing with TDX. Use the same kernel 
 
 When loading kvm_intel, use module parameter "kvm_intel.tdx=on". By default TDX support is disabled. For automation, add it to kernel command line, or edit modules.conf.
 
-The <TDP-patches-folder>/linux/reference-config is a reference kernel config file with configuring KVM/KVM_INTEL as modules.
+The \<TDP-patches-folder\>/linux/reference-config is a reference kernel config file with configuring KVM/KVM_INTEL as modules.
 
 ### 3.2 Build and Install Kernel
 
@@ -109,7 +116,7 @@ Host QEMU is based on upstream QEMU. Commid ID: bfe8020c814a30479a4241aaa78b6396
 Plus applying the following QEMU patch series:
 * series#1: Confidential Guest Support: Introduce kvm_init() and kvm_reset() virtual functions: https://lore.kernel.org/qemu-devel/20240229060038.606591-1-xiaoyao.li@intel.com/
 * series#2: V5 QEMU Guest memfd + QEMU TDX support: https://lore.kernel.org/qemu-devel/20240229063726.610065-1-xiaoyao.li@intel.com/
-* series#3: The TDP QEMU patches in <TDP-patches-folder>/qemu/
+* series#3: The TDP QEMU patches in \<TDP-patches-folder\>/qemu/
 
 ## 2. Prepare Host QEMU Tree
 
@@ -149,7 +156,7 @@ The QEMU compilation process follows the standard procedure without any special 
 
 Guest OVMF is based on upstream EDK II. Tag: edk2-stable202402
 Plus applying the following OVMF patch series:
-* series#1: The TDP OVMF patches in <TDP-patches-folder>/ovmf/
+* series#1: The TDP OVMF patches in \<TDP-patches-folder\>/ovmf/
 
 ## 2. Prepare OVMF Tree
 
