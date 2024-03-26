@@ -225,6 +225,7 @@ From the downloaded image extract kernel, initrd using,
 
 To launch a TDP guest on top of coconut-svsm, below are required:
 
+```bash
     |qemu_system_x86| \\
         -object tdx-guest,id=tdx0,num-l2-vms=1,svsm=on \\
         -machine q35,accel=kvm,kernel-irqchip=split,hpet=off,pic=off,pit=off,sata=off,l2bios=${L2BIOS},confidential-guest-support=tdx0 \\
@@ -232,10 +233,17 @@ To launch a TDP guest on top of coconut-svsm, below are required:
         -initrd ${INITRD} \\
         -kernel $KERNEL \\
         -append "root=/dev/vda1 rw console=hvc0 earlyprintk=ttyS0 loglevel=8 ignore_loglevel nopvspin" \\
+```
 
+**NOTE:** Current code base also supports vioapic emulation in svsm. To try,  update the launch script with highlighted parameters,
+```bash
+        -machine q35,accel=kvm,**kernel-irqchip=on**,hpet=off,pic=off,pit=off,
+        -append "root=/dev/vda1 rw **console=ttyS0** earlyprintk=ttyS0 loglevel=8 ignore_loglevel nopvspin" \\
+```
 
 Here is a reference script,
 
+```bash
     #!/bin/bash
 
     MEMORY=4G
@@ -269,3 +277,4 @@ Here is a reference script,
             -device virtio-serial,romfile= \
             -device virtconsole,chardev=mux \
             -serial chardev:mux \
+```
