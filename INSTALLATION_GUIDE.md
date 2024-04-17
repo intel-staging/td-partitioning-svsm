@@ -270,7 +270,7 @@ Here is a reference script,
             -nographic \
             -smp ${CPU} \
             -nodefaults \
-            -cpu host \
+            -cpu host,-hle,-rtm \
             -bios ${BIOS} \
             -initrd ${INITRD} \
             -kernel $KERNEL \
