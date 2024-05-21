@@ -474,7 +474,7 @@ impl VmExit {
                             ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_SUCCESS);
                         } else {
                             ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_RETRY);
-                            ctx.set_gpreg(GuestCpuGPRegCode::R11, u64::from(start + size));
+                            ctx.set_gpreg(GuestCpuGPRegCode::R11, u64::from(gpa + size));
                         }
                     }
                     Err(e) => {
