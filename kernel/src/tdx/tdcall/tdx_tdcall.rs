@@ -409,13 +409,13 @@ pub fn tdvmcall_setup_event_notify(vector: u64) -> Result<(), TdVmcallError> {
 /// Details can be found in TDX GHCI spec section 'TDG.VP.VMCALL<GetQuote>'
 ///
 /// * buffer: a piece of 4KB-aligned shared memory
-pub fn tdvmcall_get_quote(buffer: &mut [u8]) -> Result<(), TdVmcallError> {
-    let addr = buffer.as_mut_ptr() as u64 | *SHARED_MASK;
+pub fn tdvmcall_get_quote(buffer: u64, size: u64) -> Result<(), TdVmcallError> {
+    let addr = buffer | *SHARED_MASK;
 
     let mut args = TdVmcallArgs {
         r11: TDVMCALL_GETQUOTE,
         r12: addr,
-        r13: buffer.len() as u64,
+        r13: size,
         ..Default::default()
     };
 

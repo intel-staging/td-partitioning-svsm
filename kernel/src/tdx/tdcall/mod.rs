@@ -31,7 +31,7 @@ pub use tdx_tdcall::*;
 const TDCALL_TDINFO: u64 = 1;
 const TDCALL_TDEXTENDRTMR: u64 = 2;
 const TDCALL_TDGETVEINFO: u64 = 3;
-const TDCALL_TDREPORT: u64 = 4;
+pub(crate) const TDCALL_TDREPORT: u64 = 4;
 const TDCALL_TDACCEPTPAGE: u64 = 6;
 const TDCALL_VM_RD: u64 = 7;
 const TDCALL_VM_WR: u64 = 8;
@@ -66,7 +66,7 @@ pub const TDCALL_STATUS_PAGE_ALREADY_ACCEPTED: u64 = 0x00000B0A00000000;
 pub const TDCALL_STATUS_PAGE_SIZE_MISMATCH: u64 = 0xC0000B0B00000001;
 
 // TDVMCALL completion status code
-const TDVMCALL_STATUS_SUCCESS: u64 = 0;
+pub(crate) const TDVMCALL_STATUS_SUCCESS: u64 = 0;
 
 // A public wrapper for use of asm_td_vmcall, this function takes a mutable reference of a
 // TdcallArgs structure to ensure the input is valid
