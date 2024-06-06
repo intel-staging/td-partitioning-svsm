@@ -6,6 +6,7 @@
 
 pub mod error;
 
+mod attestation;
 mod gctx;
 mod gmem;
 mod instr_emul;

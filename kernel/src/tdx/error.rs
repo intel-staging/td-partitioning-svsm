@@ -76,4 +76,8 @@ pub enum TdxError {
     Tdvf,
     // TDVMCALL service error
     Service,
+    // Failed to get TDX report
+    GetReport,
+    // Failed to get TDX quote
+    Attestation,
 }
