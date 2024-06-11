@@ -349,7 +349,7 @@ impl PerCpu {
 
             let percpu = vaddr.as_mut_ptr::<PerCpu>();
 
-            core::ptr::write(percpu, PerCpu::new(apic_id, &*percpu_shared, arch));
+            ptr::write(percpu, PerCpu::new(apic_id, &*percpu_shared, arch));
 
             PERCPU_AREAS.push(PerCpuInfo::new(apic_id, shared_vaddr));
             Ok(percpu)
