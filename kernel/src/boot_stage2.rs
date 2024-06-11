@@ -166,7 +166,7 @@ global_asm!(
         jmp .Lfound_entry
 
     .Lwrong_entry:
-        /* 
+        /*
          * The current entry doesn't contain the correct input
          * parameters. Try the next one.
          */
@@ -268,6 +268,13 @@ global_asm!(
 
         xorq %rdi, %rdi
         movl %ebp, %edi
+        /*
+         * As per x86-64 ABI spec, ensure stack is 16 byte aligned before
+         * jumping to stage2_main. Below change ensures (%rsp + 8) is a
+         * multiple of 16 once the control has been transfered to the
+         * entry point function.
+         */
+        andq $-8, %rsp
         jmp stage2_main
 
         .data
