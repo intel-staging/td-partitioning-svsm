@@ -20,6 +20,7 @@ use core::arch::asm;
 const INST_SIZE: usize = 15;
 const PREFIX_SIZE: usize = 4;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum InstrEmulError {
     BadAddrSize,
