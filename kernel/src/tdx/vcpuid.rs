@@ -309,6 +309,8 @@ impl Vcpuid {
             && (this_vcpu(self.vm_id).get_ctx().get_cr4() & CR4Flags::OSXSAVE.bits()) != 0
         {
             vcpuid.ecx |= Cpuid01Ecx::OSXSAVE.bits();
+        } else {
+            vcpuid.ecx &= !Cpuid01Ecx::OSXSAVE.bits();
         }
 
         // Mask SDBG for silicon debug
