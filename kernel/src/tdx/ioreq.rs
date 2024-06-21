@@ -17,7 +17,7 @@ use super::tdp::this_tdp;
 use super::utils::TdpVmId;
 use crate::address::GuestPhysAddr;
 use crate::mm::address_space::is_kernel_phys_addr_valid;
-use crate::mm::guestmem::gpa_is_shared;
+use crate::mm::guestmem::{gpa_is_shared, gpa_strip_c_bit};
 use crate::mm::memory::is_guest_phys_addr_valid;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -252,12 +252,17 @@ impl IoReq {
 
         let size = emul.get_opsize();
         let addr = u64::from(gpa);
+        let raw_addr = if gpa_is_shared(gpa) {
+            u64::from(gpa_strip_c_bit(gpa))
+        } else {
+            addr
+        };
         let io_op = &mut self.io_op;
         let (vlapic_mmio_start, vlapic_mmio_end) = this_vcpu(self.vm_id).get_vlapic().mmio_range();
         let (vioapic_mmio_start, vioapic_mmio_end) =
             this_tdp(self.vm_id).get_vioapic().get_mmio_range();
         if io_op.is_read() {
-            io_op.data = match addr {
+            io_op.data = match raw_addr {
                 // MMIO belongs to virtual lapic is emulated by SVSM.
                 v if (v >= vlapic_mmio_start && (v + size as u64) < vlapic_mmio_end) => {
                     this_vcpu(self.vm_id)
@@ -283,7 +288,7 @@ impl IoReq {
             emul.emulate_read(io_op)?;
         } else {
             emul.emulate_write(io_op)?;
-            match addr {
+            match raw_addr {
                 // MMIO belongs to virtual lapic is emulated by SVSM.
                 v if (v >= vlapic_mmio_start && (v + size as u64) < vlapic_mmio_end) => {
                     this_vcpu_mut(self.vm_id)

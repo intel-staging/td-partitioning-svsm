@@ -9,7 +9,6 @@ use super::utils::TdpVmId;
 use super::vlapic::vlapic_receive_intr;
 use crate::cpu::idt::common::FIRST_DYNAMIC_VECTOR;
 use crate::locking::SpinLock;
-use crate::mm::pagetable::encrypt_mask;
 use bitfield_struct::bitfield;
 
 const VIOAPIC_BASE: u64 = 0xFEC00000;
@@ -304,13 +303,8 @@ impl RawVioapic {
             return (u64::MAX, 0);
         }
 
-        // TODO: Current TDX guest seems to be enlightened but need
-        // to consider for unenlightened guest as well.
         let base = self.base_addr;
-        (
-            base | (encrypt_mask() as u64),
-            (base + (VIOAPIC_SIZE as u64)) | (encrypt_mask() as u64),
-        )
+        (base, base + (VIOAPIC_SIZE as u64))
     }
 
     fn init(&mut self) {
