@@ -1092,7 +1092,21 @@ impl Vlapic {
     fn update_tpr_threshold(&self) {
         let tpr = (self.get_reg(APIC_OFFSET_TPR) as u8) >> 4;
         let irr = self.find_highest_irr() >> 4;
-        let threshold = if irr > tpr { 0 } else { irr };
+        let mut threshold = if irr > tpr { 0 } else { irr };
+
+        // SDM vol-3 27.2.1.1 Checks on VMX Controls -> VM-Excution Control Fields:
+        // The following check is performed if the “use TPR shadow” VM-execution control is 1 and
+        // the “virtualize APIC accesses” and “virtual-interrupt delivery” VM-execution controls
+        // are both 0: the value of bits 3:0 of the TPR threshold VM-execution control field
+        // should not be greater than the value of bits 7:4 of VTPR (see Section 30.1.1).
+        //
+        // under xapic mode, we always disalble virtual APIC access & virtual interrupt delivery,
+        // and may enable TPR shadowing, then we must ensure TPR[7:4] >= TPR_THRESHOLD[3:0]
+        if vector_prio(tpr) < threshold {
+            threshold = vector_prio(tpr);
+        }
+
+        assert!(threshold < 16);
         this_vcpu(self.vm_id)
             .get_vmcs()
             .write32(VmcsField32Control::TPR_THRESHOLD, threshold as u32);
