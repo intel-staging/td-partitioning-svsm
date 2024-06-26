@@ -9,6 +9,7 @@ use super::gctx::{GuestCpuContext, GuestCpuGPRegCode};
 use super::gmem::{accept_guest_mem, convert_guest_mem};
 use super::ioreq::{IoDirection, IoReq, IoType};
 use super::percpu::{this_vcpu, this_vcpu_mut};
+use super::service::handle_vmcall_service;
 use super::tdcall::{tdcall_get_td_info, tdvmcall_sti_halt};
 use super::tdp::this_tdp;
 use super::utils::{
@@ -521,6 +522,25 @@ impl VmExit {
                         ctx.set_gpreg(GuestCpuGPRegCode::R10, TDG_VP_VMCALL_INVALID_OPERAND);
                     }
                 }
+            }
+            TdVmCallLeaf::Service => {
+                let command_addr =
+                    GuestPhysAddr::new(ctx.get_gpreg(GuestCpuGPRegCode::R12) as usize);
+                let response_addr =
+                    GuestPhysAddr::new(ctx.get_gpreg(GuestCpuGPRegCode::R13) as usize);
+                let mut result = TDG_VP_VMCALL_INVALID_OPERAND;
+                if is_guest_phys_addr_valid(command_addr)
+                    && is_guest_phys_addr_valid(response_addr)
+                    && command_addr.is_page_aligned()
+                    && response_addr.is_page_aligned()
+                {
+                    if handle_vmcall_service(command_addr, response_addr).is_ok() {
+                        result = TDG_VP_VMCALL_SUCCESS;
+                    } else {
+                        result = TDG_VP_VMCALL_INVALID_OPERAND;
+                    }
+                }
+                ctx.set_gpreg(GuestCpuGPRegCode::R10, result);
             }
             TdVmCallLeaf::Halt => {
                 self.handle_hlt(false);
