@@ -7,7 +7,10 @@
 //! This crate defines the Virtual TPM interfaces and shows what
 //! TPM backends are supported
 
+pub mod capability;
 pub mod cmd;
+pub mod ecdsa;
+pub mod ek;
 /// TPM 2.0 Reference Implementation by Microsoft
 pub mod mstpm;
 pub mod ptp;
@@ -20,6 +23,8 @@ use crate::{locking::SpinLock, protocols::errors::SvsmReqError};
 pub enum VtpmError {
     // Failed to run TPM Command
     RunCommand(cmd::TpmCommandError),
+    // Endorsement key related error
+    EndorsementKey,
 }
 
 /// Basic services required to perform the VTPM Protocol
