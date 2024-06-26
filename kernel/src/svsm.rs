@@ -503,7 +503,10 @@ pub extern "C" fn svsm_main() {
 
     if is_tdx() {
         #[cfg(feature = "mstpm")]
-        ptp::init().expect("TPM CRB failed to initialize");
+        {
+            ptp::init().expect("TPM CRB failed to initialize");
+            svsm::tdx::tdx_tpm_measurement_init().expect("Failed to initialize TDP measurement");
+        }
         tdpvp_start();
     }
 
