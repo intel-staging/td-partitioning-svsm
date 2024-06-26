@@ -27,6 +27,7 @@ use sha2::{Digest, Sha256, Sha384};
 use super::error::TdxError;
 use super::service::{TdVmcallServiceCommandHeader, TdVmcallServiceResponseHeader};
 use super::tdvf::get_tdvf_sec_fv;
+use super::vtpm_cert::generate_vtpm_certificates;
 
 const PLATFORM_BLOB_DESC: &[u8] = b"TDVF";
 const RTM_MEASUREMENT_STATE_SIZE: usize = 1024;
@@ -42,7 +43,10 @@ const TCG_EVENT2_ENTRY_HOB_GUID: [u8; 16] = [
 
 static VRTM_MEASUREMENT: SpinLock<RtmMeasurementState> = SpinLock::new(RtmMeasurementState::new());
 
-fn hash_sha1(hash_data: &[u8], digest_sha1: &mut [u8; TPM2_SHA1_SIZE]) -> Result<(), TdxError> {
+pub(super) fn hash_sha1(
+    hash_data: &[u8],
+    digest_sha1: &mut [u8; TPM2_SHA1_SIZE],
+) -> Result<(), TdxError> {
     let mut digest = Sha1::new();
     digest.update(hash_data);
     let hash = digest.finalize();
@@ -55,7 +59,7 @@ fn hash_sha1(hash_data: &[u8], digest_sha1: &mut [u8; TPM2_SHA1_SIZE]) -> Result
     }
 }
 
-fn hash_sha256(
+pub(super) fn hash_sha256(
     hash_data: &[u8],
     digest_sha256: &mut [u8; TPM2_SHA256_SIZE],
 ) -> Result<(), TdxError> {
@@ -71,7 +75,7 @@ fn hash_sha256(
     }
 }
 
-fn hash_sha384(
+pub(super) fn hash_sha384(
     hash_data: &[u8],
     digest_sha384: &mut [u8; TPM2_SHA384_SIZE],
 ) -> Result<(), TdxError> {
@@ -242,6 +246,9 @@ fn extend_tdvf_sec() -> Result<(), TdxError> {
 pub fn tdx_tpm_measurement_init() -> Result<(), TdxError> {
     // Send the start up command and initialize the TPM
     startup(TPM_SU_CLEAR).map_err(|_| TdxError::Measurement)?;
+
+    // Provision the CA and EK certificate
+    generate_vtpm_certificates(&[])?;
 
     // Then extend the SVSM version into PCR[0]
     extend_svsm_version()?;
