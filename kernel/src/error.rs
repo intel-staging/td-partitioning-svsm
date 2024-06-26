@@ -64,4 +64,6 @@ pub enum SvsmError {
     Tdx(TdxError),
     // Interrupt handler register related error
     Irq(IrqError),
+    // Errors related to TCG2
+    Tcg2,
 }
