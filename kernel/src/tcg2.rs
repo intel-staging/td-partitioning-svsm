@@ -8,6 +8,7 @@ use core::mem::size_of;
 
 pub const EV_NO_ACTION: u32 = 0x0000_0003;
 pub const EV_SEPARATOR: u32 = 0x0000_0004;
+pub const EV_S_CRTM_VERSION: u32 = 0x00000008;
 pub const EV_PLATFORM_CONFIG_FLAGS: u32 = 0x0000_000A;
 pub const EV_EFI_EVENT_BASE: u32 = 0x8000_0000;
 pub const EV_EFI_PLATFORM_FIRMWARE_BLOB2: u32 = EV_EFI_EVENT_BASE + 0xA;
