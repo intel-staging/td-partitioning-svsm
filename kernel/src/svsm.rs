@@ -54,7 +54,7 @@ use svsm::tdx::run_tdpvp;
 use svsm::types::{PageSize, GUEST_VMPL, PAGE_SIZE};
 use svsm::utils::{halt, immut_after_init::ImmutAfterInitCell, zero_mem_region};
 #[cfg(feature = "mstpm")]
-use svsm::vtpm::vtpm_init;
+use svsm::vtpm::{ptp, vtpm_init};
 
 use svsm::mm::validate::{init_valid_bitmap_ptr, migrate_valid_bitmap};
 
@@ -499,14 +499,16 @@ pub extern "C" fn svsm_main() {
         }
     }
 
-    #[cfg(feature = "mstpm")]
-    vtpm_init().expect("vTPM failed to initialize");
-
     virt_log_usage();
 
     if is_tdx() {
+        #[cfg(feature = "mstpm")]
+        ptp::init().expect("TPM CRB failed to initialize");
         tdpvp_start();
     }
+
+    #[cfg(feature = "mstpm")]
+    vtpm_init().expect("vTPM failed to initialize");
 
     if config.should_launch_fw() {
         if let Err(e) = launch_fw(&config) {
