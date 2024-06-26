@@ -36,6 +36,7 @@ pub mod string;
 pub mod svsm_console;
 pub mod svsm_paging;
 pub mod task;
+pub mod tcg2;
 pub mod tdx;
 pub mod types;
 pub mod utils;
