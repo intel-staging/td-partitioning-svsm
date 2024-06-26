@@ -20,10 +20,12 @@ use crate::vtpm::cmd::TPM_SU_CLEAR;
 use alloc::string::String;
 use alloc::vec;
 use core::mem::size_of;
+use core::ptr::addr_of_mut;
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384};
 
 use super::error::TdxError;
+use super::service::{TdVmcallServiceCommandHeader, TdVmcallServiceResponseHeader};
 use super::tdvf::get_tdvf_sec_fv;
 
 const PLATFORM_BLOB_DESC: &[u8] = b"TDVF";
@@ -31,6 +33,9 @@ const RTM_MEASUREMENT_STATE_SIZE: usize = 1024;
 const HOB_TYPE_GUID_EXTENSION: u16 = 0x0004;
 const HOB_TYPE_END_OF_HOB_LIST: u16 = 0xffff;
 const GUIDED_HOB_HEADER_SIZE: usize = 24;
+const L1_VTPM_COMMAND_VERSION: u8 = 0x00;
+const L1_VTPM_COMMAND_DETECT: u8 = 0x01;
+const L1_VTPM_COMMAND_STATUS_SUCCESS: u8 = 0x00;
 const TCG_EVENT2_ENTRY_HOB_GUID: [u8; 16] = [
     0x1e, 0x22, 0x6c, 0xd2, 0x30, 0x24, 0x8a, 0x4c, 0x91, 0x70, 0x3f, 0xcb, 0x45, 0x0, 0x41, 0x3f,
 ];
@@ -247,4 +252,75 @@ pub fn tdx_tpm_measurement_init() -> Result<(), TdxError> {
     // Finalize the virtual RTM events, append a end of hob list.
     let mut vrtm = VRTM_MEASUREMENT.lock();
     vrtm.finalize()
+}
+
+#[repr(C)]
+#[derive(Debug, Default)]
+struct L1VtpmCommand {
+    version: u8,
+    command: u8,
+    reserved: u16,
+}
+
+impl L1VtpmCommand {
+    fn read_from_bytes(bytes: &[u8]) -> Result<Self, TdxError> {
+        if bytes.len() < size_of::<Self>() {
+            return Err(TdxError::Service);
+        }
+
+        let mut header = Self::default();
+        unsafe {
+            core::slice::from_raw_parts_mut(addr_of_mut!(header) as *mut u8, size_of::<Self>())
+                .copy_from_slice(&bytes[..size_of::<Self>()])
+        }
+        Ok(header)
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Default)]
+struct L1VtpmResponse {
+    version: u8,
+    command: u8,
+    status: u8,
+    reserved: u8,
+}
+
+impl L1VtpmResponse {
+    fn as_bytes(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, size_of::<Self>()) }
+    }
+}
+
+pub fn handle_vtpm_request(command: &[u8], response: &mut [u8]) -> Result<usize, TdxError> {
+    let l1_vtpm_cmd =
+        L1VtpmCommand::read_from_bytes(&command[size_of::<TdVmcallServiceCommandHeader>()..])?;
+    match l1_vtpm_cmd.command {
+        L1_VTPM_COMMAND_DETECT => vtpm_detect(response),
+        _ => Err(TdxError::Service),
+    }
+}
+
+fn vtpm_detect(response: &mut [u8]) -> Result<usize, TdxError> {
+    let mut length = size_of::<TdVmcallServiceResponseHeader>();
+    let l1_vtpm_resp = &mut response[length..];
+    let l1_vtpm_resp_header = L1VtpmResponse {
+        version: L1_VTPM_COMMAND_VERSION,
+        command: L1_VTPM_COMMAND_DETECT,
+        status: L1_VTPM_COMMAND_STATUS_SUCCESS,
+        reserved: 0,
+    };
+    l1_vtpm_resp[..size_of::<L1VtpmResponse>()].copy_from_slice(l1_vtpm_resp_header.as_bytes());
+    length += size_of::<L1VtpmResponse>();
+    let resp_data = &mut l1_vtpm_resp[size_of::<L1VtpmResponse>()..];
+
+    let vrtm = VRTM_MEASUREMENT.lock();
+    let events_size = vrtm.size();
+    if resp_data.len() < events_size {
+        return Err(TdxError::Measurement);
+    }
+    resp_data[..events_size].copy_from_slice(vrtm.state());
+    length += events_size;
+
+    Ok(length)
 }

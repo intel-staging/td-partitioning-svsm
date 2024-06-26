@@ -74,4 +74,6 @@ pub enum TdxError {
     Measurement,
     // Parse TDVF error
     Tdvf,
+    // TDVMCALL service error
+    Service,
 }

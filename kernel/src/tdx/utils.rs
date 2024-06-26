@@ -396,6 +396,7 @@ pub const TDG_VP_VMCALL_INVALID_OPERAND: u64 = 0x8000000000000000;
 #[derive(Clone, Copy, Debug)]
 pub enum TdVmCallLeaf {
     MapGpa,
+    Service,
     Io,
     Mmio,
     Halt,
@@ -408,6 +409,7 @@ impl From<u64> for TdVmCallLeaf {
     fn from(val: u64) -> Self {
         match val {
             0x10001 => TdVmCallLeaf::MapGpa,
+            0x10005 => TdVmCallLeaf::Service,
             0x1e => TdVmCallLeaf::Io,
             0x30 => TdVmCallLeaf::Mmio,
             0x0c => TdVmCallLeaf::Halt,
