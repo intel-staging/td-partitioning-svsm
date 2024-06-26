@@ -18,6 +18,7 @@ mod percpu;
 mod sirte;
 mod tdcall;
 mod tdp;
+mod tdvf;
 mod utils;
 mod vcpu;
 mod vcpu_comm;

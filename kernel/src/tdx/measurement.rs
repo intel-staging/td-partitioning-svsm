@@ -5,6 +5,8 @@
 
 extern crate alloc;
 
+use crate::address::Address;
+use crate::mm::{PerCPUPageMappingGuard, PAGE_SIZE};
 use crate::tcg2::{
     TpmlDigestValues, TpmtHa, TPM2_HASH_ALG_ID_SHA1, TPM2_HASH_ALG_ID_SHA256,
     TPM2_HASH_ALG_ID_SHA384, TPM2_SHA1_SIZE, TPM2_SHA256_SIZE, TPM2_SHA384_SIZE,
@@ -17,6 +19,7 @@ use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384};
 
 use super::error::TdxError;
+use super::tdvf::get_tdvf_sec_fv;
 
 fn hash_sha1(hash_data: &[u8], digest_sha1: &mut [u8; TPM2_SHA1_SIZE]) -> Result<(), TdxError> {
     let mut digest = Sha1::new();
@@ -99,10 +102,28 @@ pub fn extend_svsm_version() -> Result<(), TdxError> {
     Ok(())
 }
 
+fn extend_tdvf_sec() -> Result<(), TdxError> {
+    // Get the SEC Firmware Volume of TDVF
+    let (base, len) = get_tdvf_sec_fv().map_err(|_| TdxError::Tdvf)?;
+
+    // Map the code region of TDVF
+    let guard =
+        PerCPUPageMappingGuard::create(base, base.checked_add(len).ok_or(TdxError::Tdvf)?, 0)
+            .map_err(|_| TdxError::Tdvf)?;
+    let vstart = guard.virt_addr().as_ptr::<u8>();
+    let mem: &[u8] = unsafe { core::slice::from_raw_parts(vstart, PAGE_SIZE) };
+
+    let digests = create_digests(mem)?;
+    pcr_extend(0, &digests).map_err(|_| TdxError::Measurement)
+}
+
 pub fn tdx_tpm_measurement_init() -> Result<(), TdxError> {
     // Send the start up command and initialize the TPM
     startup(TPM_SU_CLEAR).map_err(|_| TdxError::Measurement)?;
 
     // Then extend the SVSM version into PCR[0]
-    extend_svsm_version()
+    extend_svsm_version()?;
+
+    // Then extend the TDVF code FV into PCR[0]
+    extend_tdvf_sec()
 }
