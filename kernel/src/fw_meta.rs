@@ -55,7 +55,7 @@ fn from_hex(c: char) -> Result<u8, SvsmError> {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct Uuid {
+pub(crate) struct Uuid {
     data: [u8; 16],
 }
 
@@ -160,13 +160,13 @@ const SEV_META_DESC_TYPE_CAA: u32 = 4;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
-struct RawMetaHeader {
-    len: u16,
-    uuid: [u8; size_of::<Uuid>()],
+pub(crate) struct RawMetaHeader {
+    pub len: u16,
+    pub uuid: [u8; size_of::<Uuid>()],
 }
 
 impl RawMetaHeader {
-    fn data_len(&self) -> Option<usize> {
+    pub fn data_len(&self) -> Option<usize> {
         let full_len = self.len as usize;
         full_len.checked_sub(size_of::<Self>())
     }
@@ -174,9 +174,9 @@ impl RawMetaHeader {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
-struct RawMetaBuffer {
-    data: [u8; PAGE_SIZE - size_of::<RawMetaHeader>() - 32],
-    header: RawMetaHeader,
+pub(crate) struct RawMetaBuffer {
+    pub data: [u8; PAGE_SIZE - size_of::<RawMetaHeader>() - 32],
+    pub header: RawMetaHeader,
     _pad: [u8; 32],
 }
 
@@ -186,7 +186,7 @@ const _: () = assert!(size_of::<RawMetaHeader>() == size_of::<u16>() + size_of::
 
 /// Find a table with the given UUID in the given memory slice, and return a
 /// subslice into its data
-fn find_table<'a>(uuid: &Uuid, mem: &'a [u8]) -> Option<&'a [u8]> {
+pub(crate) fn find_table<'a>(uuid: &Uuid, mem: &'a [u8]) -> Option<&'a [u8]> {
     let mut idx = mem.len();
 
     while idx != 0 {
