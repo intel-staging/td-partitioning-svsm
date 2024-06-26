@@ -72,4 +72,6 @@ pub enum TdxError {
     WriteGuestMem,
     // TPM/TDX measurement error
     Measurement,
+    // Parse TDVF error
+    Tdvf,
 }
