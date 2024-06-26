@@ -11,6 +11,7 @@ mod gmem;
 mod instr_emul;
 mod interrupts;
 mod ioreq;
+mod measurement;
 mod msr_bitmap;
 mod opcode;
 mod percpu;
@@ -30,6 +31,7 @@ mod vmcs_lib;
 mod vmexit;
 mod vmsr;
 
+pub use measurement::tdx_tpm_measurement_init;
 pub use percpu::{run_tdpvp, TdPerCpu};
 pub use tdcall::{
     td_accept_memory, td_shared_mask, tdcall_get_ve_info, tdvmcall_cpuid, tdvmcall_halt,

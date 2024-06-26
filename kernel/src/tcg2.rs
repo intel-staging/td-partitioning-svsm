@@ -223,7 +223,10 @@ impl TpmtHa {
             return None;
         }
 
-        let mut digest = TpmtHa::default();
+        let mut digest = TpmtHa {
+            hash_alg,
+            ..Default::default()
+        };
         digest.digest.hash[..hash_size].copy_from_slice(hash);
 
         Some(digest)
