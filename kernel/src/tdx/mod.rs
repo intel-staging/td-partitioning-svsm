@@ -33,6 +33,7 @@ mod vmcs;
 mod vmcs_lib;
 mod vmexit;
 mod vmsr;
+mod vtpm_cert;
 
 pub use measurement::tdx_tpm_measurement_init;
 pub use percpu::{run_tdpvp, TdPerCpu};

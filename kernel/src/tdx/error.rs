@@ -80,4 +80,6 @@ pub enum TdxError {
     GetReport,
     // Failed to get TDX quote
     Attestation,
+    // Failed to generate vTPM certificates
+    VtpmCertificates,
 }

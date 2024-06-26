@@ -80,3 +80,4 @@ pub mod aead {
 // Crypto implementations supported. Only one of them must be compiled-in.
 
 pub mod rustcrypto;
+pub mod x509;
