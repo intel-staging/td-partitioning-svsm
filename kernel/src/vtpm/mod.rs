@@ -7,6 +7,7 @@
 //! This crate defines the Virtual TPM interfaces and shows what
 //! TPM backends are supported
 
+pub mod cmd;
 /// TPM 2.0 Reference Implementation by Microsoft
 pub mod mstpm;
 pub mod ptp;
@@ -14,6 +15,12 @@ pub mod ptp;
 use crate::vtpm::mstpm::MsTpm as Vtpm;
 use crate::{locking::LockGuard, protocols::vtpm::TpmPlatformCommand};
 use crate::{locking::SpinLock, protocols::errors::SvsmReqError};
+
+#[derive(Debug, Clone, Copy)]
+pub enum VtpmError {
+    // Failed to run TPM Command
+    RunCommand(cmd::TpmCommandError),
+}
 
 /// Basic services required to perform the VTPM Protocol
 pub trait VtpmProtocolInterface {
