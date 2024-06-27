@@ -1,0 +1,38 @@
+From 451252cce5331fb4a81647313f085abaa50511a9 Mon Sep 17 00:00:00 2001
+From: Chuanxiao Dong <chuanxiao.dong@intel.com>
+Date: Mon, 11 Mar 2024 18:19:27 -0700
+Subject: [PATCH 4/8] OvmfPkg/FwCfg: Switch to PIO mode for TDP guest
+
+TDP guest uses private memory like TDX guest, which cannot support DMA
+mode in the PEI phase. Need to use PIO mode.
+
+Signed-off-by: Chuanxiao Dong <chuanxiao.dong@intel.com>
+---
+ OvmfPkg/Library/QemuFwCfgLib/QemuFwCfgPei.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/OvmfPkg/Library/QemuFwCfgLib/QemuFwCfgPei.c b/OvmfPkg/Library/QemuFwCfgLib/QemuFwCfgPei.c
+index da86a3c84c..b50a58c589 100644
+--- a/OvmfPkg/Library/QemuFwCfgLib/QemuFwCfgPei.c
++++ b/OvmfPkg/Library/QemuFwCfgLib/QemuFwCfgPei.c
+@@ -73,7 +73,7 @@ QemuFwCfgProbe (
+   IoReadFifo8 (FW_CFG_IO_DATA, sizeof Signature, &Signature);
+   IoWrite16 (FW_CFG_IO_SELECTOR, (UINT16)QemuFwCfgItemInterfaceVersion);
+   IoReadFifo8 (FW_CFG_IO_DATA, sizeof Revision, &Revision);
+-  CcGuest = QemuFwCfgIsCcGuest ();
++  CcGuest = QemuFwCfgIsCcGuest () || TdpIsEnabled ();
+ 
+   *Supported    = FALSE;
+   *DmaSupported = FALSE;
+@@ -204,7 +204,7 @@ InternalQemuFwCfgDmaBytes (
+   // TDX does not support DMA operations in PEI stage, we should
+   // not have reached here.
+   //
+-  ASSERT (!QemuFwCfgIsCcGuest ());
++  ASSERT (!QemuFwCfgIsCcGuest () && !TdpIsEnabled ());
+ 
+   Access.Control = SwapBytes32 (Control);
+   Access.Length  = SwapBytes32 (Size);
+-- 
+2.43.0
+

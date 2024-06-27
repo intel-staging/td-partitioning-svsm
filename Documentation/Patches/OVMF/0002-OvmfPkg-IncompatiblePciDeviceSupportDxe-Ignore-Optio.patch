@@ -1,0 +1,42 @@
+From f8ac59b95a21f642d9c51b261b38d28f2498d65a Mon Sep 17 00:00:00 2001
+From: Peter Fang <peter.fang@intel.com>
+Date: Fri, 17 Feb 2023 16:00:01 -0800
+Subject: [PATCH 2/8] OvmfPkg/IncompatiblePciDeviceSupportDxe: Ignore OptionRom
+
+TD-partitioned guests are unable to create page aliases in the PCI MMIO
+space, rendering OptionRom to be inaccessible to the guest. Skip
+OptionRom processing by applying the logic in
+c477b2783f6d95b62266f4fff9b0c286ac1d7bb8 to all guest types.
+
+This needs to be reworked later.
+
+Signed-off-by: Peter Fang <peter.fang@intel.com>
+---
+ .../IncompatiblePciDeviceSupport.c                            | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/OvmfPkg/IncompatiblePciDeviceSupportDxe/IncompatiblePciDeviceSupport.c b/OvmfPkg/IncompatiblePciDeviceSupportDxe/IncompatiblePciDeviceSupport.c
+index 3a6f759882..042c347383 100644
+--- a/OvmfPkg/IncompatiblePciDeviceSupportDxe/IncompatiblePciDeviceSupport.c
++++ b/OvmfPkg/IncompatiblePciDeviceSupportDxe/IncompatiblePciDeviceSupport.c
+@@ -205,7 +205,7 @@ CheckDevice (
+   //
+   // In Td guest OptionRom is not allowed.
+   //
+-  if (CcProbe ()) {
++  if (CcProbe () || TRUE) {
+     Length += sizeof mOptionRomConfiguration;
+   }
+ 
+@@ -227,7 +227,7 @@ CheckDevice (
+   CopyMem (Ptr, &mMmio64Configuration, sizeof mMmio64Configuration);
+   Length = sizeof mMmio64Configuration;
+ 
+-  if (CcProbe ()) {
++  if (CcProbe () || TRUE) {
+     CopyMem (Ptr + Length, &mOptionRomConfiguration, sizeof mOptionRomConfiguration);
+     Length += sizeof mOptionRomConfiguration;
+   }
+-- 
+2.43.0
+

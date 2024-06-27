@@ -1,0 +1,66 @@
+From f09e8b8f1c5d7c162201556c26d04186eaaac650 Mon Sep 17 00:00:00 2001
+From: Jiaqi Gao <jiaqi.gao@intel.com>
+Date: Fri, 12 Apr 2024 10:17:55 -0400
+Subject: [PATCH] x86/tdx: implement `is_private_mmio` for tdp
+
+For a TDP L2 guest, secure device such as vtpm is emulated by L1-VMM and
+MMIO must be mapped private because shared GPA is controlled by host VMM
+which may bring security risks.
+
+Signed-off-by: Jiaqi Gao <jiaqi.gao@intel.com>
+---
+ arch/x86/coco/tdx/tdx.c | 23 ++++++++++++++++++++++-
+ 1 file changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/coco/tdx/tdx.c b/arch/x86/coco/tdx/tdx.c
+index 1d6b863c42b0..66453aa61ca0 100644
+--- a/arch/x86/coco/tdx/tdx.c
++++ b/arch/x86/coco/tdx/tdx.c
+@@ -37,6 +37,8 @@
+ 
+ #define TDREPORT_SUBTYPE_0	0
+ 
++#define VTPM_BASE_ADDRESS 0xfed40000
++
+ /* Called from __tdx_hypercall() for unrecoverable failure */
+ noinstr void __tdx_hypercall_failed(void)
+ {
+@@ -757,10 +759,22 @@ static bool tdx_enc_status_change_finish(unsigned long vaddr, int numpages,
+ 	return true;
+ }
+ 
++static bool tdp_is_private_mmio(u64 addr) {
++	/*
++	* For a TDP L2 guest, vTPM is emulated by the L1-VMM and
++	* must be mapped private.
++	*/
++	if (addr >= VTPM_BASE_ADDRESS &&
++	    addr < (VTPM_BASE_ADDRESS + PAGE_SIZE))
++		return true;
++
++	return false;
++}
++
+ void __init tdx_early_init(void)
+ {
+ 	u64 cc_mask;
+-	u32 eax, sig[3];
++	u32 eax, ebx, ecx, edx, sig[3];
+ 
+ 	cpuid_count(TDX_CPUID_LEAF_ID, 0, &eax, &sig[0], &sig[2],  &sig[1]);
+ 
+@@ -821,4 +835,11 @@ void __init tdx_early_init(void)
+ 	x86_cpuinit.parallel_bringup = false;
+ 
+ 	pr_info("Guest detected\n");
++
++	cpuid_count(TDX_CPUID_LEAF_ID, 1, &eax, &ebx, &ecx, &edx);
++
++	if (ebx & 0x1) {
++		x86_platform.hyper.is_private_mmio = tdp_is_private_mmio;
++		pr_info("TDP Guest detected\n");
++	}
+ }
+-- 
+2.43.0
+
