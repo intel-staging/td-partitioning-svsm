@@ -4,6 +4,7 @@
 //
 
 use crate::error::SvsmError;
+use bitflags::bitflags;
 use core::mem::size_of;
 
 pub const EV_NO_ACTION: u32 = 0x0000_0003;
@@ -27,6 +28,24 @@ pub const TPM2_SHA512_SIZE: usize = 64;
 const MAX_TPM2_HASH_SIZE: usize = TPM2_SHA512_SIZE;
 const DIGEST_COUNT: usize = 5;
 const MAX_PLATFORM_BLOB_DESC_SIZE: usize = 255;
+const VENDER_INFO: &[u8] = b"COCONUTSVSM";
+
+bitflags! {
+    #[derive(Debug, Clone, Copy)]
+    pub struct HashAlgorithms: u32 {
+        const SHA1 = 0b00000001;
+        const SHA256 = 0b00000010;
+        const SHA384 = 0b00000100;
+        const SHA512 = 0b00001000;
+    }
+}
+
+impl HashAlgorithms {
+    pub fn algorithm_num(&self) -> u32 {
+        let v = self.bits() & 0x0000_ffff;
+        u32::count_ones(v)
+    }
+}
 
 #[repr(C)]
 #[derive(Debug, Default)]
@@ -46,6 +65,12 @@ pub struct TcgPcrEventHeader {
     pub event_size: u32,
 }
 
+impl TcgPcrEventHeader {
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, size_of::<Self>()) }
+    }
+}
+
 /// TCG_EfiSpecIdEvent is the first event in the event log
 /// It is used to determine the version and format of the events in the log, identify
 /// the number and size of the recorded digests
@@ -53,7 +78,7 @@ pub struct TcgPcrEventHeader {
 /// Defined in TCG PC Client Platform Firmware Profile Specification:
 /// 'Table 20 TCG_EfiSpecIdEvent'
 #[repr(C)]
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct TcgEfiSpecIdevent {
     pub signature: [u8; 16],
     pub platform_class: u32,
@@ -71,6 +96,18 @@ pub struct TcgEfiSpecIdevent {
     // pub vendor_info: [u8; vendor_info_size],
 }
 
+impl Default for TcgEfiSpecIdevent {
+    fn default() -> Self {
+        Self {
+            signature: *b"Spec ID Event03\0",
+            platform_class: 0,
+            spec_version_minor: 0,
+            spec_version_major: 0x2,
+            spec_errata: 105,
+            uintn_size: 0x2,
+        }
+    }
+}
 impl TcgEfiSpecIdevent {
     pub fn as_bytes(&self) -> &[u8] {
         unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, size_of::<Self>()) }
@@ -299,4 +336,205 @@ impl Default for TpmuHa {
             hash: [0; MAX_TPM2_HASH_SIZE],
         }
     }
+}
+
+#[derive(Debug)]
+pub struct Tcg2EventLog<'a> {
+    log: &'a mut [u8],
+    offset: usize,
+    hash_algorithms: HashAlgorithms,
+}
+
+impl<'a> Tcg2EventLog<'a> {
+    pub fn new(
+        mem: &'a mut [u8],
+        hash_algorithms: HashAlgorithms,
+    ) -> Result<Tcg2EventLog<'a>, SvsmError> {
+        let mut event_log = Tcg2EventLog {
+            log: mem,
+            offset: 0,
+            hash_algorithms,
+        };
+
+        // Create the TCG_EfiSpecIDEvent as the first event
+        event_log.log_spec_id_event()?;
+
+        Ok(event_log)
+    }
+
+    pub fn create_tcg2_event(
+        &mut self,
+        mr_index: u32,
+        event_type: u32,
+        event_data: &[&[u8]],
+        hash_data: &[u8],
+    ) -> Result<TpmlDigestValues, SvsmError> {
+        let digests = calculate_digests(self.hash_algorithms, hash_data)?;
+        self.log_tcg2_event(mr_index, event_type, event_data, &digests)?;
+
+        Ok(digests)
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.log[..self.offset]
+    }
+
+    fn log_spec_id_event(&mut self) -> Result<usize, SvsmError> {
+        let first = TcgEfiSpecIdevent::default();
+        let mut event_data_size = size_of::<TcgEfiSpecIdevent>() + size_of::<u32>(); // header + number_of_algorithms
+        let number_of_algorithms = self.hash_algorithms.algorithm_num();
+        event_data_size += size_of::<TcgEfiSpecIdEventAlgorithmSize>() * number_of_algorithms as usize
+            + size_of::<u8>()  // vendor_info_size
+            + VENDER_INFO.len(); // vendor_info
+
+        let event_size = size_of::<TcgPcrEventHeader>()
+            .checked_add(event_data_size)
+            .ok_or(SvsmError::Tcg2)?;
+
+        if self.offset.checked_add(event_size).ok_or(SvsmError::Tcg2)? > self.log.len() {
+            return Err(SvsmError::Tcg2);
+        }
+
+        let pcr_header = TcgPcrEventHeader {
+            mr_index: 0,
+            event_type: EV_NO_ACTION,
+            digest: [0u8; 20],
+            event_size: event_data_size as u32,
+        };
+
+        self.write(pcr_header.as_bytes());
+
+        // Write `TcgEfiSpecIdevent``
+        self.write(first.as_bytes());
+        self.write(&number_of_algorithms.to_le_bytes());
+        if self.hash_algorithms.contains(HashAlgorithms::SHA1) {
+            self.write(&TPM2_HASH_ALG_ID_SHA1.to_le_bytes());
+            self.write(&(TPM2_SHA1_SIZE as u16).to_le_bytes());
+        }
+        if self.hash_algorithms.contains(HashAlgorithms::SHA256) {
+            self.write(&TPM2_HASH_ALG_ID_SHA256.to_le_bytes());
+            self.write(&(TPM2_SHA256_SIZE as u16).to_le_bytes());
+        }
+        if self.hash_algorithms.contains(HashAlgorithms::SHA384) {
+            self.write(&TPM2_HASH_ALG_ID_SHA384.to_le_bytes());
+            self.write(&(TPM2_SHA384_SIZE as u16).to_le_bytes());
+        }
+        self.write(&[VENDER_INFO.len() as u8]);
+        self.write(VENDER_INFO);
+
+        Ok(self.offset)
+    }
+
+    fn log_tcg2_event(
+        &mut self,
+        mr_index: u32,
+        event_type: u32,
+        event_data: &[&[u8]],
+        digests: &TpmlDigestValues,
+    ) -> Result<(), SvsmError> {
+        let event_data_size: usize = event_data.iter().map(|&data| data.len()).sum();
+        let digest_size = digests.size().ok_or(SvsmError::Tcg2)?;
+        let event_size = size_of::<u32>() * 3
+            + digest_size
+                .checked_add(event_data_size)
+                .ok_or(SvsmError::Tcg2)?;
+
+        if self.offset.checked_add(event_size).ok_or(SvsmError::Tcg2)? > self.log.len() {
+            return Err(SvsmError::Tcg2);
+        }
+
+        // Write the event header into event log memory and update the 'size'
+        self.write(&mr_index.to_le_bytes());
+        self.write(&event_type.to_le_bytes());
+        let size = digests
+            .write_le_bytes(&mut self.log[self.offset..])
+            .ok_or(SvsmError::Tcg2)?;
+        self.offset += size;
+        self.write(&event_size.to_le_bytes());
+
+        // Fill the event data into event log
+        for &data in event_data {
+            self.write(data);
+        }
+
+        Ok(())
+    }
+
+    fn write(&mut self, data: &[u8]) {
+        let idx = self.offset;
+        self.log[idx..idx + data.len()].copy_from_slice(data);
+        self.offset += data.len();
+    }
+}
+
+fn calculate_digests(
+    hash_algs: HashAlgorithms,
+    data: &[u8],
+) -> Result<TpmlDigestValues, SvsmError> {
+    let mut digests = TpmlDigestValues::new();
+
+    if hash_algs.contains(HashAlgorithms::SHA1) {
+        let digest = hash_sha1(data);
+        digests.add_digest(&digest)?;
+    }
+
+    if hash_algs.contains(HashAlgorithms::SHA256) {
+        let digest = hash_sha256(data);
+        digests.add_digest(&digest)?;
+    }
+
+    if hash_algs.contains(HashAlgorithms::SHA1) {
+        let digest = hash_sha384(data);
+        digests.add_digest(&digest)?;
+    }
+
+    Ok(digests)
+}
+
+fn hash_sha1(data: &[u8]) -> TpmtHa {
+    use sha1::{Digest, Sha1};
+
+    let mut digest = Sha1::new();
+    digest.update(data);
+    let hash = digest.finalize();
+    assert_eq!(hash.as_slice().len(), TPM2_SHA1_SIZE);
+
+    let mut digest = TpmtHa {
+        hash_alg: TPM2_HASH_ALG_ID_SHA1,
+        digest: Default::default(),
+    };
+    digest.digest.hash[..hash.len()].clone_from_slice(hash.as_slice());
+    digest
+}
+
+fn hash_sha256(data: &[u8]) -> TpmtHa {
+    use sha2::{Digest, Sha256};
+
+    let mut digest = Sha256::new();
+    digest.update(data);
+    let hash = digest.finalize();
+    assert_eq!(hash.as_slice().len(), TPM2_SHA256_SIZE);
+
+    let mut digest = TpmtHa {
+        hash_alg: TPM2_HASH_ALG_ID_SHA256,
+        digest: Default::default(),
+    };
+    digest.digest.hash[..hash.len()].clone_from_slice(hash.as_slice());
+    digest
+}
+
+fn hash_sha384(data: &[u8]) -> TpmtHa {
+    use sha2::{Digest, Sha384};
+
+    let mut digest = Sha384::new();
+    digest.update(data);
+    let hash = digest.finalize();
+    assert_eq!(hash.as_slice().len(), TPM2_SHA384_SIZE);
+
+    let mut digest = TpmtHa {
+        hash_alg: TPM2_HASH_ALG_ID_SHA384,
+        digest: Default::default(),
+    };
+    digest.digest.hash[..hash.len()].clone_from_slice(hash.as_slice());
+    digest
 }
