@@ -458,12 +458,10 @@ pub fn tdcall_get_td_info() -> Result<TdInfo, TdCallError> {
 /// Extend a TDCS.RTMR measurement register
 ///
 /// Details can be found in TDX Module ABI spec section 'TDG.VP.INFO Leaf'
-pub fn tdcall_extend_rtmr(digest: &TdxDigest, mr_index: u32) -> Result<(), TdCallError> {
-    let buffer: u64 = core::ptr::addr_of!(digest.data) as u64;
-
+pub fn tdcall_extend_rtmr(digest_addr: u64, mr_index: u32) -> Result<(), TdCallError> {
     let mut args = TdcallArgs {
         rax: TDCALL_TDEXTENDRTMR,
-        rcx: buffer,
+        rcx: digest_addr,
         rdx: mr_index as u64,
         ..Default::default()
     };

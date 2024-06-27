@@ -7,18 +7,20 @@ extern crate alloc;
 
 use crate::address::Address;
 use crate::locking::SpinLock;
-use crate::mm::{PerCPUPageMappingGuard, PAGE_SIZE};
+use crate::mm::alloc::{allocate_page, free_page};
+use crate::mm::{virt_to_phys, PerCPUPageMappingGuard, PAGE_SIZE};
 use crate::tcg2::{
-    TpmlDigestValues, TpmtHa, UefiPlatformFirmwareBlob2, EV_EFI_PLATFORM_FIRMWARE_BLOB2,
-    EV_S_CRTM_VERSION, TPM2_HASH_ALG_ID_SHA1, TPM2_HASH_ALG_ID_SHA256, TPM2_HASH_ALG_ID_SHA384,
-    TPM2_SHA1_SIZE, TPM2_SHA256_SIZE, TPM2_SHA384_SIZE,
+    HashAlgorithms, Tcg2EventLog, TpmlDigestValues, TpmtHa, UefiPlatformFirmwareBlob2,
+    EV_EFI_PLATFORM_FIRMWARE_BLOB2, EV_SEPARATOR, EV_S_CRTM_VERSION, TPM2_HASH_ALG_ID_SHA1,
+    TPM2_HASH_ALG_ID_SHA256, TPM2_HASH_ALG_ID_SHA384, TPM2_SHA1_SIZE, TPM2_SHA256_SIZE,
+    TPM2_SHA384_SIZE,
 };
 use crate::utils::align_up;
 use crate::vtpm::cmd::tpm2_pcr_extend::pcr_extend;
 use crate::vtpm::cmd::tpm2_startup::startup;
 use crate::vtpm::cmd::TPM_SU_CLEAR;
 use alloc::string::String;
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 use core::mem::size_of;
 use core::ptr::addr_of_mut;
 use sha1::Sha1;
@@ -26,6 +28,7 @@ use sha2::{Digest, Sha256, Sha384};
 
 use super::error::TdxError;
 use super::service::{TdVmcallServiceCommandHeader, TdVmcallServiceResponseHeader};
+use super::tdcall::tdcall_extend_rtmr;
 use super::tdvf::get_tdvf_sec_fv;
 use super::vtpm_cert::generate_vtpm_certificates;
 
@@ -243,12 +246,58 @@ fn extend_tdvf_sec() -> Result<(), TdxError> {
     vrtm.write_event(0, EV_EFI_PLATFORM_FIRMWARE_BLOB2, &digests, &fw_blob_bytes)
 }
 
+pub fn create_separator(td_event_log: &mut Tcg2EventLog<'_>) -> Result<(), TdxError> {
+    let separator = u32::to_le_bytes(0);
+
+    // Measure 0x0000_0000 into RTMR[0] RTMR[1] RTMR[2] RTMR[3]
+    for rtmr in 0..4 {
+        let digests = td_event_log
+            .create_tcg2_event(rtmr + 1, EV_SEPARATOR, &[&separator], &separator)
+            .unwrap();
+        let hash = &digests.digests[0].digest.hash;
+        extend_rtmr(&hash[..TPM2_SHA384_SIZE].try_into().unwrap(), rtmr)?;
+    }
+
+    Ok(())
+}
+
+pub fn extend_rtmr(data: &[u8; TPM2_SHA384_SIZE], rtmr_index: u32) -> Result<(), TdxError> {
+    let vaddr = allocate_page().map_err(|_| TdxError::Measurement)?;
+    let slice = unsafe { core::slice::from_raw_parts_mut(vaddr.bits() as *mut u8, PAGE_SIZE) };
+    slice[..data.len()].copy_from_slice(data);
+    let paddr = virt_to_phys(vaddr);
+
+    tdcall_extend_rtmr(paddr.bits() as u64, rtmr_index).map_err(|_| TdxError::Measurement)
+}
+
+pub fn extend_separator() -> Result<Vec<u8>, TdxError> {
+    let page = allocate_page().map_err(|_| TdxError::Measurement)?;
+
+    let event_log_buf = unsafe { core::slice::from_raw_parts_mut(page.as_mut_ptr(), PAGE_SIZE) };
+    event_log_buf.fill(0xff);
+
+    let hash_algorithm = HashAlgorithms::SHA384;
+    let mut logger =
+        Tcg2EventLog::new(event_log_buf, hash_algorithm).map_err(|_| TdxError::Measurement)?;
+    create_separator(&mut logger)?;
+
+    // Get event log size
+    let event_log_size = logger.as_slice().len();
+    let event_log = event_log_buf[..event_log_size].to_vec();
+
+    free_page(page);
+    Ok(event_log)
+}
+
 pub fn tdx_tpm_measurement_init() -> Result<(), TdxError> {
     // Send the start up command and initialize the TPM
     startup(TPM_SU_CLEAR).map_err(|_| TdxError::Measurement)?;
 
+    // Extend separator into TDX RTMRs
+    let event_log = extend_separator()?;
+
     // Provision the CA and EK certificate
-    generate_vtpm_certificates(&[])?;
+    generate_vtpm_certificates(&event_log)?;
 
     // Then extend the SVSM version into PCR[0]
     extend_svsm_version()?;
