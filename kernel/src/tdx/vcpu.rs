@@ -11,12 +11,15 @@ use super::gctx::{GuestCpuContext, GuestCpuSegCode};
 use super::interrupts::VCPU_KICK_VECTOR;
 use super::tdcall::tdvmcall_sti_halt;
 use super::tdp::this_tdp;
-use super::utils::{td_flush_vpid_global, td_invept, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet};
+use super::utils::{
+    td_flush_vpid_global, td_invept, td_vp_enter, L2ExitInfo, TdpVmId, VpEnterRet,
+    DUMMY_EXIT_REASON,
+};
 use super::vcpu_comm::{VcpuCommBlock, VcpuReqFlags};
 use super::virq::Virq;
 use super::vlapic::Vlapic;
 use super::vmcs::Vmcs;
-use super::vmcs_lib::VmcsField32ReadOnly;
+use super::vmcs_lib::{VmcsField32Control, VmcsField32ReadOnly};
 use super::vmexit::VmExit;
 use crate::cpu::idt::common::{GP_VECTOR, PF_VECTOR, UD_VECTOR};
 use crate::cpu::interrupts::{disable_irq, enable_irq};
@@ -369,15 +372,27 @@ impl Vcpu {
         write_msr(MSR_IA32_PRED_CMD, 1).unwrap();
 
         match td_vp_enter(self.vm_id, pa) {
-            VpEnterRet::L2Exit(l2exit_info) => {
+            VpEnterRet::L2Exit(mut l2exit_info) => {
                 // Prevent L2 VM from using the predicted branch targets before switching to L1 VMM
                 write_msr(MSR_IA32_PRED_CMD, 1).unwrap();
 
                 self.ctx.post_vmexit();
                 self.virq.post_vmexit();
+
+                // if exit_reason is dummy, it means there is interrupt pending in L1, so vp enter
+                // for L2 is broken, and SVSM does not need handle such vmexit as it's dummy, but
+                // we still need take care of the interrupt which may not be injected to L2.
+                if l2exit_info.exit_reason == DUMMY_EXIT_REASON {
+                    l2exit_info.idt_vec_info = self
+                        .vmcs
+                        .read32(VmcsField32Control::VM_ENTRY_INTR_INFO_FIELD);
+                    l2exit_info.idt_vec_errcode = self
+                        .vmcs
+                        .read32(VmcsField32Control::VM_ENTRY_EXCEPTION_ERROR_CODE);
+                }
+
                 Some(l2exit_info)
             }
-            VpEnterRet::NoL2Enter => None,
             VpEnterRet::Error(exit_reason, status) => {
                 // Prevent L2 VM from using the predicted branch targets before switching to L1 VMM
                 write_msr(MSR_IA32_PRED_CMD, 1).unwrap();

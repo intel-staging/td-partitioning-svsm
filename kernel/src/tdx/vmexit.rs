@@ -12,9 +12,9 @@ use super::percpu::{this_vcpu, this_vcpu_mut};
 use super::tdcall::{tdcall_get_td_info, tdvmcall_sti_halt};
 use super::tdp::this_tdp;
 use super::utils::{
-    td_add_page_alias, GPAAttr, L2ExitInfo, TdCallLeaf, TdVmCallLeaf, TdpVmId, TDCS_NOTIFY_ENABLES,
-    TDG_VP_VMCALL_INVALID_OPERAND, TDG_VP_VMCALL_RETRY, TDG_VP_VMCALL_SUCCESS, TDX_OPERAND_INVALID,
-    TDX_SUCCESS,
+    td_add_page_alias, GPAAttr, L2ExitInfo, TdCallLeaf, TdVmCallLeaf, TdpVmId, DUMMY_EXIT_REASON,
+    TDCS_NOTIFY_ENABLES, TDG_VP_VMCALL_INVALID_OPERAND, TDG_VP_VMCALL_RETRY, TDG_VP_VMCALL_SUCCESS,
+    TDX_OPERAND_INVALID, TDX_SUCCESS,
 };
 use super::vcpu_comm::VcpuReqFlags;
 use super::vmcs_lib::{VMX_INT_INFO_ERR_CODE_VALID, VMX_INT_INFO_VALID};
@@ -89,6 +89,7 @@ pub enum VmExitReason {
         cpl: u8,
     },
     Tdcall,
+    Dummy,
     UnSupported(u32),
 }
 
@@ -150,6 +151,7 @@ impl VmExitReason {
                 cpl: l2exit_info.cpl,
             },
             77 => VmExitReason::Tdcall,
+            DUMMY_EXIT_REASON => VmExitReason::Dummy,
             _ => VmExitReason::UnSupported(exit_reason),
         }
     }
@@ -678,6 +680,7 @@ impl VmExit {
             VmExitReason::Wbinvd => self.handle_wbinvd(),
             VmExitReason::Xsetbv { cpl } => self.handle_xsetbv(cpl)?,
             VmExitReason::Tdcall => self.handle_tdcall(),
+            VmExitReason::Dummy => return Ok(()),
             VmExitReason::UnSupported(v) => {
                 log::error!("UnSupported VmExit Reason {}", v);
                 return Err(TdxError::InjectExcp(ErrExcp::UD));

@@ -216,27 +216,36 @@ pub struct L2ExitInfo {
     pub cpl: u8,
 }
 
+// take use of 0xff (not used) as dummy exit reason
+pub const DUMMY_EXIT_REASON: u32 = 0xFF;
+
 impl L2ExitInfo {
-    fn from_tdcall_args(v: TdcallArgs) -> Self {
-        L2ExitInfo {
-            exit_reason: v.rax as u32,
-            exit_qual: v.rcx,
-            fault_gla: v.rdx,
-            fault_gpa: v.r8,
-            exit_intr_info: v.r9 as u32,
-            exit_intr_errcode: (v.r9 >> 32) as u32,
-            idt_vec_info: v.r10 as u32,
-            idt_vec_errcode: (v.r10 >> 32) as u32,
-            exit_instr_info: v.r11 as u32,
-            exit_instr_len: (v.r11 >> 32) as u32,
-            cpl: (v.r12 & 0x3) as u8,
+    fn from_tdcall_args(v: TdcallArgs, no_enter: bool) -> Self {
+        if no_enter {
+            L2ExitInfo {
+                exit_reason: DUMMY_EXIT_REASON,
+                ..Default::default()
+            }
+        } else {
+            L2ExitInfo {
+                exit_reason: v.rax as u32,
+                exit_qual: v.rcx,
+                fault_gla: v.rdx,
+                fault_gpa: v.r8,
+                exit_intr_info: v.r9 as u32,
+                exit_intr_errcode: (v.r9 >> 32) as u32,
+                idt_vec_info: v.r10 as u32,
+                idt_vec_errcode: (v.r10 >> 32) as u32,
+                exit_instr_info: v.r11 as u32,
+                exit_instr_len: (v.r11 >> 32) as u32,
+                cpl: (v.r12 & 0x3) as u8,
+            }
         }
     }
 }
 
 pub enum VpEnterRet {
     L2Exit(L2ExitInfo),
-    NoL2Enter,
     Error(u32, u32),
 }
 
@@ -256,8 +265,10 @@ pub fn td_vp_enter(vm_id: TdpVmId, ctx_pa: u64) -> VpEnterRet {
         TDX_SUCCESS
         | TDX_L2_EXIT_HOST_ROUTED_ASYNC
         | TDX_L2_EXIT_HOST_ROUTED_TDVMCALL
-        | TDX_L2_EXIT_PENDING_INTERRUPT => VpEnterRet::L2Exit(L2ExitInfo::from_tdcall_args(ret)),
-        TDX_PENDING_INTERRUPT => VpEnterRet::NoL2Enter,
+        | TDX_L2_EXIT_PENDING_INTERRUPT => {
+            VpEnterRet::L2Exit(L2ExitInfo::from_tdcall_args(ret, false))
+        }
+        TDX_PENDING_INTERRUPT => VpEnterRet::L2Exit(L2ExitInfo::from_tdcall_args(ret, true)),
         _ => VpEnterRet::Error(ret.rax as u32, (ret.rax >> 32) as u32),
     }
 }
