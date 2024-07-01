@@ -406,7 +406,10 @@ impl GuestCpuCrRegs {
             }
         }
 
-        if changed_cr0.contains(CR0Flags::PG | CR0Flags::WP | CR0Flags::CD) {
+        if changed_cr0.contains(CR0Flags::PG)
+            | changed_cr0.contains(CR0Flags::WP)
+            | changed_cr0.contains(CR0Flags::CD)
+        {
             this_vcpu(vm_id)
                 .get_cb()
                 .make_request(VcpuReqFlags::FLUSH_EPT);
@@ -448,7 +451,9 @@ impl GuestCpuCrRegs {
         let changed_cr4 = CR4Flags::from_bits(self.get_cr4()).unwrap() ^ effective_cr4;
 
         if changed_cr4.contains(*CR4_TRAP_PASSTHROUGH_FLAGS) {
-            // TODO: Flush EPT
+            this_vcpu(vm_id)
+                .get_cb()
+                .make_request(VcpuReqFlags::FLUSH_EPT);
             if effective_cr4.contains(CR4Flags::PAE)
                 && CR0Flags::from_bits_truncate(self.get_cr0()).contains(CR0Flags::PG)
                 && !efer.contains(EFERFlags::LMA)
