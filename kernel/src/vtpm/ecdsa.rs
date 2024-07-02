@@ -13,6 +13,7 @@ use super::{
 };
 use crate::tcg2::TPM2_HASH_ALG_ID_SHA384;
 use alloc::vec::Vec;
+use tpm2_flush_context::flush_context;
 use tpm2_sign::sign;
 
 const ECDSA_SHA384_SIGNATURE_SIZE: usize = 96;
@@ -32,6 +33,14 @@ impl EcdsaSigningKey {
         public_key.extend_from_slice(point_y);
 
         Self { handle, public_key }
+    }
+}
+
+impl Drop for EcdsaSigningKey {
+    fn drop(&mut self) {
+        if flush_context(self.handle).is_err() {
+            log::error!("Failed to flush context for TPM key");
+        }
     }
 }
 
