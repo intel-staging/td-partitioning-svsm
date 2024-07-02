@@ -7,6 +7,7 @@
 pub mod tpm2_create_loaded;
 pub mod tpm2_create_primary;
 pub mod tpm2_evict_control;
+pub mod tpm2_flush_context;
 pub mod tpm2_get_capability;
 pub mod tpm2_nv_define_space;
 pub mod tpm2_nv_write;
