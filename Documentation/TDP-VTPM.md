@@ -1,6 +1,6 @@
 ## TDP environment setup
 
-For host Kernel, QEMU and guest image setup, please follow [INSTALLATION_GUIDE] https://github.com/intel-staging/td-partitioning-svsm/blob/svsm-tdp-patches/INSTALLATION_GUIDE.md.
+For host Kernel, QEMU and guest image setup, please follow [INSTALLATION_GUIDE](https://github.com/intel-staging/td-partitioning-svsm/blob/svsm-tdp-patches/INSTALLATION_GUIDE.md).
 
 vTPM requires additional patches for OVMF and TDP guest Linux Kernel. Please follow [Setup OVMF](#Setup-OVMF) and [Setup TDP guest Linux Kernel](#Setup-TDP-guest-Linux-Kernel) to build the images.
 
@@ -68,11 +68,16 @@ make
  - vTPM CA generation with TDX remote attestation
  - vTPM Endorsement Key certificate and CA provision
  - TDP L2 guest vTPM detection through TDVMCALL
- - SVSM TPM startup and measurement (SVSM version and TDVF).
+ - SVSM vTPM startup and measurement (SVSM version and TDVF).
+ - Ephemeral vTPM NVS
+
+## Test Utility
+ - [tpm2-tools](https://tpm2-tools.readthedocs.io/en/latest/INSTALL/)
+ - [Keylime](https://github.com/keylime/rust-keylime)
+ - [Linux IMA](https://www.redhat.com/en/blog/how-use-linux-kernels-integrity-measurement-architecture)
 
 ## What has been tested:
  - TPM event log/PCR replay in L2 Linux
- - Linux IMA
  - Endorsement Key certificate and CA certificate read and verify.
  - Quote verification
 
