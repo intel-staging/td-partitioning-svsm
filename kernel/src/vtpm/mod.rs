@@ -15,6 +15,9 @@ pub mod ek;
 pub mod mstpm;
 pub mod ptp;
 
+#[cfg(feature = "test_vtpm")]
+pub mod test;
+
 use crate::vtpm::mstpm::MsTpm as Vtpm;
 use crate::{locking::LockGuard, protocols::vtpm::TpmPlatformCommand};
 use crate::{locking::SpinLock, protocols::errors::SvsmReqError};

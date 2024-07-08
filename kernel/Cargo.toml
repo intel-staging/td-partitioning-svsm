@@ -45,6 +45,7 @@ default = ["mstpm"]
 enable-gdb = ["dep:gdbstub", "dep:gdbstub_arch"]
 fuzzing-hooks = []
 mstpm = ["dep:libmstpm", "sha1", "sha2", "der"]
+test_vtpm = []
 
 [dev-dependencies]
 memoffset.workspace = true
