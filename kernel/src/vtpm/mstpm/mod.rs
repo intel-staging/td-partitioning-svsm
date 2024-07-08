@@ -116,6 +116,13 @@ impl MsTpmSimulatorInterface for MsTpm {
             .copy_from_slice(response_ffi.as_slice());
         *length = response_ffi.len();
 
+        #[cfg(feature = "test_vtpm")]
+        log::info!(
+            "response len = {:02x?} : {:02x?}",
+            *length,
+            &buffer[..*length]
+        );
+
         Ok(())
     }
 

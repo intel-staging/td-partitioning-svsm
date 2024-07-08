@@ -293,6 +293,13 @@ pub fn tdx_tpm_measurement_init() -> Result<(), TdxError> {
     // Send the start up command and initialize the TPM
     startup(TPM_SU_CLEAR).map_err(|_| TdxError::Measurement)?;
 
+    // Test createek flow in L1
+    #[cfg(feature = "test_vtpm")]
+    {
+        use crate::vtpm::test::test_createek_flow;
+        test_createek_flow()?;
+    }
+
     // Extend separator into TDX RTMRs
     let event_log = extend_separator()?;
 

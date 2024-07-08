@@ -82,5 +82,5 @@ make
  - Quote verification
 
 ## Known Issues:
- - Potential `Page fault` error observed when running `tpm2_createek` in guest Linux.
+ - Potential `Page fault` error observed when running `tpm2_createek` in guest Linux. ( Run `make TEST_VTPM=1` and build `svsm.bin`, test createek flow in L1.)
  - TSS reports `out of memory for object contexts` when running `keylime` in guest Linux.

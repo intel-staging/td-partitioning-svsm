@@ -1,4 +1,9 @@
+ifdef TEST_VTPM
+FEATURES ?= "default, test_vtpm"
+else
 FEATURES ?= "default"
+endif
+
 SVSM_ARGS = --features ${FEATURES}
 
 ifdef RELEASE
