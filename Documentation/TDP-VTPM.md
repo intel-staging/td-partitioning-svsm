@@ -79,8 +79,5 @@ make
 ## What has been tested:
  - TPM event log/PCR replay in L2 Linux
  - Endorsement Key certificate and CA certificate read and verify.
- - Quote verification
+ - Quote verification with [Linux Stack for TDX](https://www.intel.com/content/www/us/en/content-details/783067/whitepaper-linux-stacks-for-intel-trust-domain-extension-1-0.html)
 
-## Known Issues:
- - Potential `Page fault` error observed when running `tpm2_createek` in guest Linux. ( Run `make TEST_VTPM=1` and build `svsm.bin`, test createek flow in L1.)
- - TSS reports `out of memory for object contexts` when running `keylime` in guest Linux.
