@@ -5,7 +5,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 use core::convert::{TryFrom, TryInto};
 use der::asn1::{
     Any, BitString, GeneralizedTime, ObjectIdentifier, OctetString, SetOfVec, UIntBytes, UtcTime,
@@ -87,8 +87,8 @@ impl<'a> CertificateBuilder<'a> {
 
     pub fn sign(
         &mut self,
-        signature: &'a mut alloc::vec::Vec<u8>,
-        mut signer: impl FnMut(&[u8], &mut alloc::vec::Vec<u8>),
+        signature: &'a mut Vec<u8>,
+        mut signer: impl FnMut(&[u8], &mut Vec<u8>),
     ) -> Result<(), X509Error> {
         let tbs = self.0.tbs_certificate.to_vec().unwrap();
         signer(tbs.as_slice(), signature);
@@ -131,10 +131,10 @@ impl<'a> Certificate<'a> {
         })?;
         let issuer = vec![issuer_name];
 
-        let subject: alloc::vec::Vec<SetOfVec<DistinguishedName<'_>>> = if self_signed {
+        let subject: Vec<SetOfVec<DistinguishedName<'_>>> = if self_signed {
             issuer.clone()
         } else {
-            alloc::vec::Vec::new()
+            Vec::new()
         };
 
         let validity = Validity {
@@ -233,9 +233,9 @@ pub struct TBSCertificate<'a> {
     pub version: Version<'a>,
     pub serial_number: UIntBytes<'a>, // ASN.1 INTEGER
     pub signature: AlgorithmIdentifier<'a>,
-    pub issuer: alloc::vec::Vec<SetOfVec<DistinguishedName<'a>>>,
+    pub issuer: Vec<SetOfVec<DistinguishedName<'a>>>,
     pub validity: Validity,
-    pub subject: alloc::vec::Vec<SetOfVec<DistinguishedName<'a>>>,
+    pub subject: Vec<SetOfVec<DistinguishedName<'a>>>,
     pub subject_public_key_info: SubjectPublicKeyInfo<'a>,
     pub issuer_unique_id: Option<UniqueIdentifier<'a, 1>>,
     pub subject_unique_id: Option<UniqueIdentifier<'a, 2>>,
@@ -297,7 +297,7 @@ impl Encodable for AuthorityKeyIdentifier<'_> {
     fn encoded_len(&self) -> der::Result<der::Length> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
-            der::Tag::ContextSpecific {
+            Tag::ContextSpecific {
                 constructed: true,
                 number: TagNumber::new(0),
             },
@@ -309,7 +309,7 @@ impl Encodable for AuthorityKeyIdentifier<'_> {
     fn encode(&self, encoder: &mut der::Encoder<'_>) -> der::Result<()> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
-            der::Tag::ContextSpecific {
+            Tag::ContextSpecific {
                 constructed: true,
                 number: TagNumber::new(0),
             },
@@ -321,13 +321,13 @@ impl Encodable for AuthorityKeyIdentifier<'_> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SubjectAltName<'a>(pub alloc::vec::Vec<SetOfVec<DistinguishedName<'a>>>);
+pub struct SubjectAltName<'a>(pub Vec<SetOfVec<DistinguishedName<'a>>>);
 
 impl Encodable for SubjectAltName<'_> {
     fn encoded_len(&self) -> der::Result<der::Length> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
-            der::Tag::ContextSpecific {
+            Tag::ContextSpecific {
                 constructed: true,
                 number: TagNumber::new(4),
             },
@@ -339,7 +339,7 @@ impl Encodable for SubjectAltName<'_> {
     fn encode(&self, encoder: &mut der::Encoder<'_>) -> der::Result<()> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
-            der::Tag::ContextSpecific {
+            Tag::ContextSpecific {
                 constructed: true,
                 number: TagNumber::new(4),
             },
@@ -364,7 +364,7 @@ impl Encodable for Version<'_> {
     fn encoded_len(&self) -> der::Result<der::Length> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
-            der::Tag::ContextSpecific {
+            Tag::ContextSpecific {
                 constructed: true,
                 number: TagNumber::new(0),
             },
@@ -376,7 +376,7 @@ impl Encodable for Version<'_> {
     fn encode(&self, encoder: &mut der::Encoder<'_>) -> der::Result<()> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
-            der::Tag::ContextSpecific {
+            Tag::ContextSpecific {
                 constructed: true,
                 number: TagNumber::new(0),
             },
@@ -606,10 +606,10 @@ impl<'a, const N: u8> Choice<'a> for UniqueIdentifier<'a, N> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Extensions<'a>(alloc::vec::Vec<Extension<'a>>);
+pub struct Extensions<'a>(Vec<Extension<'a>>);
 
 impl<'a> Extensions<'a> {
-    pub fn get(&self) -> &alloc::vec::Vec<Extension<'a>> {
+    pub fn get(&self) -> &Vec<Extension<'a>> {
         &self.0
     }
 }
@@ -617,7 +617,7 @@ impl<'a> Extensions<'a> {
 impl<'a> Decodable<'a> for Extensions<'a> {
     fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
         let res = decoder.any()?;
-        Ok(Self(alloc::vec::Vec::from_der(res.value())?))
+        Ok(Self(Vec::from_der(res.value())?))
     }
 }
 
@@ -718,7 +718,7 @@ impl<'a> Sequence<'a> for Extension<'a> {
     }
 }
 
-pub type ExtendedKeyUsage = alloc::vec::Vec<ObjectIdentifier>;
+pub type ExtendedKeyUsage = Vec<ObjectIdentifier>;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Sequence)]
 pub struct EcdsaSignatureDer<'a> {
