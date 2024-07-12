@@ -3,6 +3,9 @@
 // Copyright (C) 2024 Intel Corporation
 //
 
+extern crate alloc;
+
+use alloc::vec::Vec;
 use core::{
     mem::{align_of, size_of, size_of_val},
     str::FromStr,
@@ -19,9 +22,6 @@ use crate::{
 const OVMF_TABLE_FOOTER_GUID: &str = "96b582de-1fb2-45f7-baea-a366c55a082d";
 const OVMF_TABLE_TDX_METADATA_GUID: &str = "e47a6535-984a-4798-865e-4685a7bf8ec2";
 const TDX_METADATA_GUID: &str = "e9eaf9f3-168e-44d5-a8eB-7f4d8738f6ae";
-const SEC_FV_GUID: [u8; 16] = [
-    0x0D, 0xED, 0x3B, 0x76, 0x9F, 0xDE, 0xF5, 0x48, 0x81, 0xF1, 0x3E, 0x90, 0xE1, 0xB1, 0xA0, 0x15,
-];
 
 /// Section type for EFI Boot Firmware Volume.
 pub(crate) const TDX_METADATA_SECTION_TYPE_BFV: u32 = 0;
@@ -61,10 +61,10 @@ struct FirmwareVolumeHeader {
     revision: u8,
 }
 
-fn find_sec_firmware_volume(
+fn find_firmware_volumes(
     image_base: PhysAddr,
     image_size: usize,
-) -> Result<(PhysAddr, usize), SvsmError> {
+) -> Result<Vec<(PhysAddr, usize)>, SvsmError> {
     // Map the code region of TDVF
     let guard = PerCPUPageMappingGuard::create(
         image_base,
@@ -76,10 +76,14 @@ fn find_sec_firmware_volume(
     let vstart = guard.virt_addr().as_ptr::<u8>();
     let image: &[u8] = unsafe { core::slice::from_raw_parts(vstart, image_size) };
 
+    let mut fvs = Vec::new();
     let mut offset = 0;
     while offset < image.len() {
         let header_start = offset;
         let header_end = header_start + size_of::<FirmwareVolumeHeader>();
+        if header_end > image.len() {
+            break;
+        }
         let fv_hdr_ptr = image
             .get(header_start..header_end)
             .ok_or(SvsmError::Firmware)?
@@ -93,33 +97,17 @@ fn find_sec_firmware_volume(
             let volume_size = fvh.fv_length as usize;
             let end_pos = header_start + volume_size;
             if end_pos <= image.len() {
-                let volume_data = &image[header_start..end_pos];
-                if is_sec_volume(&fvh, volume_data)? {
-                    // SEC firmware volume found
-                    let sec_base = image_base
-                        .checked_add(header_start)
-                        .ok_or(SvsmError::Firmware)?;
-                    return Ok((sec_base, volume_size));
-                }
+                let fv_base = image_base
+                    .checked_add(header_start)
+                    .ok_or(SvsmError::Firmware)?;
+                fvs.push((fv_base, volume_size));
             }
             offset += volume_size
         } else {
             offset += 1;
         }
     }
-    Err(SvsmError::Firmware)
-}
-
-fn is_sec_volume(fv_header: &FirmwareVolumeHeader, volume: &[u8]) -> Result<bool, SvsmError> {
-    let ext_header_offset = fv_header.ext_header_offset as usize;
-
-    // PI Spec: The extended header is always 32-bit aligned relative to the start of
-    // the FIRMWARE VOLUME.
-    if ext_header_offset % 4 != 0 {
-        return Err(SvsmError::Firmware);
-    }
-    let fv_name = &volume[ext_header_offset..ext_header_offset + 16];
-    Ok(fv_name == SEC_FV_GUID)
+    Ok(fvs)
 }
 
 // Returns the backward offset of metadata in the ROM space
@@ -226,10 +214,10 @@ fn get_tdvf_bfv() -> Result<(PhysAddr, usize), SvsmError> {
     Err(SvsmError::Firmware)
 }
 
-pub(crate) fn get_tdvf_sec_fv() -> Result<(PhysAddr, usize), SvsmError> {
+pub(crate) fn get_tdvf_firmware_volumes() -> Result<Vec<(PhysAddr, usize)>, SvsmError> {
     // Get the BFV base and size from TDX metadata.
     let (bfv_start, bfv_size) = get_tdvf_bfv()?;
 
-    // Find the SEC firmware volume from the BFV of TDVF
-    find_sec_firmware_volume(bfv_start, bfv_size)
+    // Find the firmware volumes from the BFV of TDVF
+    find_firmware_volumes(bfv_start, bfv_size)
 }

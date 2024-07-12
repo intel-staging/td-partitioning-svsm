@@ -29,7 +29,7 @@ use sha2::{Digest, Sha256, Sha384};
 use super::error::TdxError;
 use super::service::{TdVmcallServiceCommandHeader, TdVmcallServiceResponseHeader};
 use super::tdcall::tdcall_extend_rtmr;
-use super::tdvf::get_tdvf_sec_fv;
+use super::tdvf::get_tdvf_firmware_volumes;
 use super::vtpm_cert::generate_vtpm_certificates;
 
 const PLATFORM_BLOB_DESC: &[u8] = b"TDVF";
@@ -217,33 +217,37 @@ pub fn extend_svsm_version() -> Result<(), TdxError> {
     vrtm.write_event(0, EV_S_CRTM_VERSION, &digests, version.as_bytes())
 }
 
-fn extend_tdvf_sec() -> Result<(), TdxError> {
+fn extend_tdvf_firmware_volumes() -> Result<(), TdxError> {
     // Get the SEC Firmware Volume of TDVF
-    let (base, len) = get_tdvf_sec_fv().map_err(|_| TdxError::Tdvf)?;
+    let fvs = get_tdvf_firmware_volumes().map_err(|_| TdxError::Tdvf)?;
 
-    // Map the code region of TDVF
-    let guard =
-        PerCPUPageMappingGuard::create(base, base.checked_add(len).ok_or(TdxError::Tdvf)?, 0)
-            .map_err(|_| TdxError::Tdvf)?;
-    let vstart = guard.virt_addr().as_ptr::<u8>();
-    let mem: &[u8] = unsafe { core::slice::from_raw_parts(vstart, PAGE_SIZE) };
+    for (base, len) in fvs {
+        // Map the code region of TDVF
+        let guard =
+            PerCPUPageMappingGuard::create(base, base.checked_add(len).ok_or(TdxError::Tdvf)?, 0)
+                .map_err(|_| TdxError::Tdvf)?;
+        let vstart = guard.virt_addr().as_ptr::<u8>();
+        let mem: &[u8] = unsafe { core::slice::from_raw_parts(vstart, PAGE_SIZE) };
 
-    let digests = create_digests(mem)?;
-    pcr_extend(0, &digests).map_err(|_| TdxError::Measurement)?;
+        let digests = create_digests(mem)?;
+        pcr_extend(0, &digests).map_err(|_| TdxError::Measurement)?;
 
-    // Put the firmware volume information into the event
-    let fw_blob =
-        UefiPlatformFirmwareBlob2::new(PLATFORM_BLOB_DESC, base.bits() as u64, len as u64)
+        // Put the firmware volume information into the event
+        let fw_blob =
+            UefiPlatformFirmwareBlob2::new(PLATFORM_BLOB_DESC, base.bits() as u64, len as u64)
+                .ok_or(TdxError::Measurement)?;
+        let fw_blob_size = fw_blob.size();
+        let mut fw_blob_bytes = vec![0u8; fw_blob_size];
+        fw_blob
+            .write_bytes(&mut fw_blob_bytes)
             .ok_or(TdxError::Measurement)?;
-    let fw_blob_size = fw_blob.size();
-    let mut fw_blob_bytes = vec![0u8; fw_blob_size];
-    fw_blob
-        .write_bytes(&mut fw_blob_bytes)
-        .ok_or(TdxError::Measurement)?;
 
-    // Record the firmware blob event
-    let mut vrtm = VRTM_MEASUREMENT.lock();
-    vrtm.write_event(0, EV_EFI_PLATFORM_FIRMWARE_BLOB2, &digests, &fw_blob_bytes)
+        // Record the firmware blob event
+        let mut vrtm = VRTM_MEASUREMENT.lock();
+        vrtm.write_event(0, EV_EFI_PLATFORM_FIRMWARE_BLOB2, &digests, &fw_blob_bytes)?;
+    }
+
+    Ok(())
 }
 
 pub fn create_separator(td_event_log: &mut Tcg2EventLog<'_>) -> Result<(), TdxError> {
@@ -310,7 +314,7 @@ pub fn tdx_tpm_measurement_init() -> Result<(), TdxError> {
     extend_svsm_version()?;
 
     // Then extend the TDVF code FV into PCR[0]
-    extend_tdvf_sec()?;
+    extend_tdvf_firmware_volumes()?;
 
     // Finalize the virtual RTM events, append a end of hob list.
     let mut vrtm = VRTM_MEASUREMENT.lock();
