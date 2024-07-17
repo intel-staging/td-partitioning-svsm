@@ -51,11 +51,16 @@ git am --ignore-whitespace <path-to-patches>/*\.patch
 
 ### Build TDP guest Kernel
 
-Enable TDX_GUEST config:
+Below kernel configurations are required:
 
 ```
-scripts/config --enable CONFIG_INTEL_TDX_GUEST
+CONFIG_INTEL_TDX_GUEST=y
+CONFIG_TCG_TPM=y
+CONFIG_TCG_CRB=y
+CONFIG_IMA=y
 ```
+
+A reference kernel config is available at [Patches/Kernel](Patches/Kernel/reference-config-guest)
 
 Build Kernel image:
 
