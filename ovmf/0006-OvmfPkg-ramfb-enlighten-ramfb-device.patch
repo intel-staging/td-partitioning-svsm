@@ -1,0 +1,73 @@
+From 4490ba3e62d1accac4e8759188d7ad84ff0aae98 Mon Sep 17 00:00:00 2001
+From: Jason Chen CJ <jason.cj.chen@intel.com>
+Date: Fri, 7 Jun 2024 19:13:44 +0800
+Subject: [PATCH 6/6] OvmfPkg/ramfb: enlighten ramfb device
+
+mQemuRamfbMode.FrameBufferBase:
+- Without shared bit set in QemuRamfbGraphicsOutputSetMode() to inform L0
+  QEMU thru  QemuFwCfgWriteBytes (sizeof (Config), &Config);;
+- Also without shared bit for accesses from guest OVMF, like FrameBufferBlt(),
+  or FrameBufferBlt(). Before mQemuRamfbMode.FrameBufferBase is treated as
+  a virtual address and it's already mapped as a PA with shared bit set.
+- Shared bit set before calling InstallMultipleProtocolInterfaces() which
+  is to comminucate the physical address to the guest ramfb driver.
+
+Signed-off-by: donsheng <dongsheng.x.zhang@intel.com>
+Signed-off-by: Zide Chen <zide.chen@intel.com>
+Signed-off-by: Jason Chen CJ <jason.cj.chen@intel.com>
+---
+ OvmfPkg/QemuRamfbDxe/QemuRamfb.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/OvmfPkg/QemuRamfbDxe/QemuRamfb.c b/OvmfPkg/QemuRamfbDxe/QemuRamfb.c
+index 5a1044f0dc..919893ac78 100644
+--- a/OvmfPkg/QemuRamfbDxe/QemuRamfb.c
++++ b/OvmfPkg/QemuRamfbDxe/QemuRamfb.c
+@@ -18,6 +18,8 @@
+ #include <Library/MemoryAllocationLib.h>
+ #include <Library/UefiBootServicesTableLib.h>
+ #include <Library/QemuFwCfgLib.h>
++#include <Library/MemEncryptTdxLib.h>
++#include <Library/TdxLib.h>
+ 
+ #include <Guid/QemuRamfb.h>
+ 
+@@ -251,6 +253,7 @@ InitializeQemuRamfb (
+   UINTN                     FbSize, MaxFbSize, Pages;
+   UINTN                     FwCfgSize;
+   UINTN                     Index;
++  UINTN remain;
+ 
+   if (!QemuFwCfgIsAvailable ()) {
+     DEBUG ((DEBUG_INFO, "Ramfb: no FwCfg\n"));
+@@ -303,6 +306,18 @@ InitializeQemuRamfb (
+     return EFI_OUT_OF_RESOURCES;
+   }
+ 
++  if (TdIsEnabled ()) {
++      remain = 0;
++      while(remain < Pages) {
++        MemEncryptTdxSetPageSharedBit (
++          0,
++          FbBase + remain * 0x1000,
++          1
++        );
++        remain += 1;
++      }
++  }
++
+   DEBUG ((
+     DEBUG_INFO,
+     "Ramfb: Framebuffer at 0x%lx, %lu kB, %lu pages\n",
+@@ -382,6 +397,8 @@ InitializeQemuRamfb (
+     goto FreeRamfbHandle;
+   }
+ 
++  if (TdIsEnabled ())
++      mQemuRamfbMode.FrameBufferBase |= TdSharedPageMask();
+   Status = gBS->InstallMultipleProtocolInterfaces (
+                   &mGopHandle,
+                   &gEfiDevicePathProtocolGuid,
+-- 
+2.25.1
+
