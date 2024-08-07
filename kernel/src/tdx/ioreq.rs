@@ -357,6 +357,13 @@ impl IoReq {
                 )?),
             ),
             IoType::TdvmcallMmio { addr, size } => {
+                // Check if the tdvmcall MMIO GPA is shared address or not.
+                // Suppose L2 only accesses shared MMIO GPA via tdvmcall.
+                // If it is not, probably indicates a bug in L2.
+                if !gpa_is_shared(addr) {
+                    return Err(TdxError::IoEmul(self.io_type));
+                }
+
                 let emul = TdvmcallIoEmul {
                     ctx: this_vcpu_mut(self.vm_id).get_ctx_mut(),
                     size: AddrSize::try_from(size)?,
